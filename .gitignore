@@ -1,10 +1,112 @@
-# Python-generated files
+# ===========================
+# Python
+# ===========================
 __pycache__/
-*.py[oc]
-build/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
 dist/
-wheels/
-*.egg-info
+build/
+pip-wheel-metadata/
 
-# Virtual environments
-.venv
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# ===========================
+# Environment Variables
+# ===========================
+.env
+.env.*
+!.env.example
+
+# ===========================
+# IDEs & Editors
+# ===========================
+.vscode/
+.idea/
+
+# Neovim
+.nvimlog
+
+# Vim
+*.swp
+*.swo
+*~
+
+# ===========================
+# Operating System
+# ===========================
+.DS_Store
+Thumbs.db
+
+# ===========================
+# Logs
+# ===========================
+logs/
+*.log
+
+# ===========================
+# Database
+# ===========================
+*.db
+*.sqlite
+*.sqlite3
+
+# PostgreSQL data (local Docker volume if used)
+postgres_data/
+
+# Redis data
+redis_data/
+
+# ===========================
+# Testing
+# ===========================
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.tox/
+.nox/
+
+# ===========================
+# Type Checkers
+# ===========================
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# ===========================
+# Jupyter
+# ===========================
+.ipynb_checkpoints/
+
+# ===========================
+# Docker
+# ===========================
+*.pid
+
+# ===========================
+# Temporary Files
+# ===========================
+tmp/
+temp/
+.cache/
+
+# ===========================
+# Documentation Build
+# ===========================
+site/
+
+# ===========================
+# Secrets
+# ===========================
+secrets/
+*.pem
+*.key
+*.crt
