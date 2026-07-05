@@ -2,10 +2,11 @@ import logging
 
 from fastapi import FastAPI
 
-
+from app.core.exception_handlers import register_exception_handlers
 from app.api.health import router as health_router
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.api.routes.incident import router as incident_router
 
 setup_logging()
 
@@ -21,6 +22,12 @@ logger.info("Starting AI Incident Response System...")
 
 app.include_router(health_router)
 
+app.include_router(
+    incident_router,
+    prefix="/api/v1",
+)
+
+register_exception_handlers(app)
 
 @app.get("/")
 def health() -> dict[str, str]:
