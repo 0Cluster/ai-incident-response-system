@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.5",
     "fastapi>=0.138.2",
+    "google-genai>=2.10.0",
     "psycopg>=3.3.4",
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.2.2",

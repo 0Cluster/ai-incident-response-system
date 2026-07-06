@@ -1,7 +1,8 @@
-from sqlalchemy import String, Text
+from sqlalchemy import String, Text, Enum
 from sqlalchemy.orm import Mapped, mapped_column
-
 from app.database.base import Base
+
+from app.models.enums import IncidentStatus, Severity
 
 
 class Incident(Base):
@@ -23,7 +24,16 @@ class Incident(Base):
         Text,
         nullable=True,
     )
+    status: Mapped[IncidentStatus] = mapped_column(
+        Enum(IncidentStatus),
+        default=IncidentStatus.PENDING,
+        nullable=False,
+    )
 
+    severity: Mapped[Severity | None] = mapped_column(
+        Enum(Severity),
+        nullable=True,
+    )
     recommendation: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,

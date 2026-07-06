@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.enums import IncidentStatus, Severity
 
 class IncidentCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=255)
@@ -10,6 +11,10 @@ class IncidentResponse(BaseModel):
     id: int
     title: str
     message: str
+
+    status: IncidentStatus
+    severity: Severity | None
+
     ai_summary: str | None
     recommendation: str | None
 
