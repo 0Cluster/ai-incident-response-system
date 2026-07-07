@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException,Response,BackgroundTasks
 from sqlalchemy.orm import Session
 
+from app.tasks.incident import analyze_incident
+from app.core.dependencies import get_incident_service
 from app.api.deps import get_db
 from app.services.incident import IncidentService
 from app.schemas.incident import (
@@ -15,22 +17,18 @@ router = APIRouter(
 )
 
 
-@router.post(
-    "/",
-    response_model=IncidentResponse,
-)
+@router.post("/", response_model=IncidentResponse)
 def create_incident(
     data: IncidentCreate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
+    service: IncidentService = Depends(get_incident_service),
 ):
-    service = IncidentService(db)
-
     incident = service.create_incident(data)
 
     background_tasks.add_task(
         analyze_incident,
         incident.id,
+
     )
 
     return incident

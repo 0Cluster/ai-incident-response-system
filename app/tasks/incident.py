@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.automation.engine import AutomationEngine
 from app.ai.analyzer import IncidentAnalyzer
 from app.models.enums import IncidentStatus, Severity
 from app.database.session import SessionLocal
@@ -28,7 +29,11 @@ def analyze_incident(incident_id: int) -> None:
         incident.recommendation = analysis.recommendation
         incident.status = IncidentStatus.COMPLETED
 
+
+
         repository.update(incident)
+
+        AutomationEngine().run(incident)
 
     except Exception:
         if incident is not None:

@@ -9,36 +9,26 @@ from app.exceptions.incident import IncidentNotFoundError
 
 
 class IncidentService:
-    def __init__(self, db: Session):
-        self.repository = IncidentRepository(db)
-        self.analyzer = IncidentAnalyzer()
+    def __init__(
+        self,
+        repository: IncidentRepository,
+        analyzer: IncidentAnalyzer,
+    ):
+        self.repository = repository
+        self.analyzer = analyzer
 
-    def create_incident(self, data: IncidentCreate) -> Incident:
+    def create_incident(
+        self,
+        data: IncidentCreate,
+    ) -> Incident:
+
         incident = Incident(
             title=data.title,
             message=data.message,
             status=IncidentStatus.PENDING,
         )
 
-        incident = self.repository.create(incident)
-
-        try:
-            incident.status = IncidentStatus.PROCESSING
-            self.repository.update(incident)
-
-            analysis = self.analyzer.analyze(incident.message)
-
-            incident.ai_summary = analysis.summary
-            incident.severity = Severity(analysis.severity)
-            incident.recommendation = analysis.recommendation
-            incident.status = IncidentStatus.COMPLETED
-
-            return self.repository.update(incident)
-
-        except Exception:
-            incident.status = IncidentStatus.FAILED
-            self.repository.update(incident)
-            raise
+        return self.repository.create(incident)
 
     def get_incident(self, incident_id: int) -> Incident:
         incident = self.repository.get(incident_id)
