@@ -1,16 +1,27 @@
-from app.automation.base import AutomationAction
 from app.automation.actions.log import LogAction
 from app.automation.actions.webhook import WebhookAction
+from app.automation.base import AutomationAction
+from app.automation.actions.script import ScriptAction
+from typing import Type
 
 
 class ActionRegistry:
     def __init__(self) -> None:
-        self._actions: dict[str, AutomationAction] = {}
+        self._actions: dict[str, Type[AutomationAction]] = {}
 
-    def register(self, name: str, action: AutomationAction) -> None:
+
+    def register(
+        self,
+        name: str,
+        action: type[AutomationAction],
+    ) -> None:
         self._actions[name] = action
 
-    def get(self, name: str) -> AutomationAction | None:
+
+    def get(
+        self,
+        name: str,
+    ) -> type[AutomationAction] | None:
         return self._actions.get(name)
 
     def list(self) -> list[str]:
@@ -21,8 +32,6 @@ class ActionRegistry:
 registry = ActionRegistry()
 
 # Register all built-in actions
-registry.register("log", LogAction())
-registry.register(
-    "webhook",
-    WebhookAction("https://httpbin.org/post"),
-)
+registry.register("log", LogAction)
+registry.register("collect_logs", ScriptAction)
+registry.register("webhook", WebhookAction)

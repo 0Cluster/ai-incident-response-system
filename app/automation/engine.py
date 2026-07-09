@@ -1,17 +1,34 @@
+from sqlalchemy.orm import Session
+
 from app.automation.registry import registry
-from app.automation.rules import RULES
 from app.models.incident import Incident
+from app.services.automation_rule import AutomationRuleService
 
 
 class AutomationEngine:
-    def run(self, incident: Incident) -> None:
-        actions = RULES.get(incident.severity, [])
+    def run(
+        self,
+        incident: Incident,
+        db: Session,
+    ) -> None:
 
-        for action_name in actions:
-            action = registry.get(action_name)
+        rules = AutomationRuleService(db).get_actions(
+            incident.severity.value,
+        )
 
-            if action is None:
-                print(f"Unknown action: {action_name}")
+        for rule in rules:
+            action_class = registry.get(rule.action_name)
+
+            if action_class is None:
+                print(f"Unknown action: {rule.action_name}")
                 continue
 
-            action.execute(incident)
+            action = action_class(
+                action_name=rule.action_name,
+                **rule.config,
+            )
+
+            action.execute(
+                incident,
+                db,
+            )

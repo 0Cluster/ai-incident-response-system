@@ -8,6 +8,8 @@ from app.database.base import Base
 
 # Import models so Alembic can discover them
 from app.models import incident
+from app.models import automation_run
+from app.models import automation_rule
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

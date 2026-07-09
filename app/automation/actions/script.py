@@ -1,4 +1,5 @@
-import httpx
+import subprocess
+
 from sqlalchemy.orm import Session
 
 from app.automation.base import AutomationAction
@@ -6,14 +7,14 @@ from app.models.incident import Incident
 from app.services.automation_run import AutomationRunService
 
 
-class WebhookAction(AutomationAction):
+class ScriptAction(AutomationAction):
     def __init__(
         self,
         action_name: str,
-        url: str,
+        script_path: str,
     ) -> None:
         self.action_name = action_name
-        self.url = url
+        self.script_path = script_path
 
     def execute(
         self,
@@ -21,66 +22,69 @@ class WebhookAction(AutomationAction):
         db: Session,
     ) -> None:
 
-        payload = {
-            "id": incident.id,
-            "title": incident.title,
-            "message": incident.message,
-            "summary": incident.ai_summary,
-            "severity": incident.severity.value if incident.severity else None,
-            "status": incident.status.value,
-            "recommendation": incident.recommendation,
-        }
-
         print("=" * 50)
-        print("[WEBHOOK ACTION]")
+        print("[SCRIPT ACTION]")
         print(f"Action: {self.action_name}")
         print(f"Incident: {incident.id}")
-        print(f"POST {self.url}")
+        print(f"Running: {self.script_path}")
         print("=" * 50)
 
         try:
-            response = httpx.post(
-                self.url,
-                json=payload,
-                timeout=10,
+            result = subprocess.run(
+                [self.script_path],
+                capture_output=True,
+                text=True,
+                check=True,
             )
 
-            response.raise_for_status()
+            print("Exit Code:", result.returncode)
 
-            print(f"Status Code: {response.status_code}")
+            if result.stdout:
+                print("\n----- STDOUT -----")
+                print(result.stdout)
+
+            if result.stderr:
+                print("\n----- STDERR -----")
+                print(result.stderr)
 
             AutomationRunService(db).log(
                 incident_id=incident.id,
                 action_name=self.action_name,
                 status="SUCCESS",
-                message=f"HTTP {response.status_code}",
+                message="Script executed successfully.",
             )
 
-        except httpx.HTTPStatusError as e:
+        except subprocess.CalledProcessError as e:
 
-            print(f"HTTP Error: {e.response.status_code}")
+            print("\nScript execution failed.")
+
+            if e.stdout:
+                print(e.stdout)
+
+            if e.stderr:
+                print(e.stderr)
 
             AutomationRunService(db).log(
                 incident_id=incident.id,
                 action_name=self.action_name,
                 status="FAILED",
-                message=f"HTTP {e.response.status_code}",
+                message=f"Exit code {e.returncode}",
             )
 
-        except httpx.RequestError as e:
+        except FileNotFoundError:
 
-            print(f"Request Error: {e}")
+            print(f"Script not found: {self.script_path}")
 
             AutomationRunService(db).log(
                 incident_id=incident.id,
                 action_name=self.action_name,
                 status="FAILED",
-                message=str(e),
+                message="Script file not found.",
             )
 
         except Exception as e:
 
-            print(f"Unexpected Error: {e}")
+            print(e)
 
             AutomationRunService(db).log(
                 incident_id=incident.id,

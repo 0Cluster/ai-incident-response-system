@@ -29,11 +29,12 @@ def analyze_incident(incident_id: int) -> None:
         incident.recommendation = analysis.recommendation
         incident.status = IncidentStatus.COMPLETED
 
-
-
         repository.update(incident)
 
-        AutomationEngine().run(incident)
+        AutomationEngine().run(
+            incident,
+            db,
+        )
 
     except Exception:
         if incident is not None:
