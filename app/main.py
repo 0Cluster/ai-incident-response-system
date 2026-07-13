@@ -2,11 +2,12 @@ import logging
 
 from fastapi import FastAPI
 
-from app.core.exception_handlers import register_exception_handlers
 from app.api.health import router as health_router
-from app.core.config import settings
-from app.core.logging import setup_logging
 from app.api.routes.incident import router as incident_router
+from app.core.config import settings
+from app.core.exception_handlers import register_exception_handlers
+from app.core.logging import setup_logging
+from app.monitoring.prometheus import metrics
 
 setup_logging()
 
@@ -17,6 +18,10 @@ app = FastAPI(
     version=settings.APP_VERSION,
     description="AI-powered incident response platform",
 )
+
+@app.get("/metrics")
+def prometheus_metrics():
+    return metrics()
 
 logger.info("Starting AI Incident Response System...")
 

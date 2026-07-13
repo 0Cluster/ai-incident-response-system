@@ -33,5 +33,5 @@ registry = ActionRegistry()
 
 # Register all built-in actions
 registry.register("log", LogAction)
-registry.register("collect_logs", ScriptAction)
+registry.register("script", ScriptAction)
 registry.register("webhook", WebhookAction)

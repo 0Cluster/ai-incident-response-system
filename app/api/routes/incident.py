@@ -1,15 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException,Response,BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
-from app.tasks.incident import analyze_incident
-from app.core.dependencies import get_incident_service
 from app.api.deps import get_db
-from app.services.incident import IncidentService
+from app.core.dependencies import get_incident_service
+from app.monitoring.service import MonitoringService
 from app.schemas.incident import (
     IncidentCreate,
     IncidentResponse,
     IncidentUpdate,
 )
+from app.services.incident import IncidentService
+from app.tasks.incident import analyze_incident
 
 router = APIRouter(
     prefix="/incidents",
@@ -20,16 +21,14 @@ router = APIRouter(
 @router.post("/", response_model=IncidentResponse)
 def create_incident(
     data: IncidentCreate,
-    background_tasks: BackgroundTasks,
     service: IncidentService = Depends(get_incident_service),
 ):
     incident = service.create_incident(data)
-
-    background_tasks.add_task(
-        analyze_incident,
-        incident.id,
-
+    MonitoringService.incident_created(
+        incident.severity,
     )
+
+    analyze_incident.delay(incident.id)  # pyright: ignore[reportAny, reportFunctionMemberAccess]
 
     return incident
 
@@ -38,7 +37,7 @@ def create_incident(
 def list_incidents(
     db: Session = Depends(get_db),
 ):
-    service = IncidentService(db)
+    service = IncidentService(db)  # pyright: ignore[reportCallIssue]
     return service.list_incidents()
 
 
@@ -47,7 +46,7 @@ def get_incident(
     incident_id: int,
     db: Session = Depends(get_db),
 ):
-    service = IncidentService(db)
+    service = IncidentService(db)  # pyright: ignore[reportCallIssue]
 
     incident = service.get_incident(incident_id)
 
@@ -59,6 +58,7 @@ def get_incident(
 
     return incident
 
+
 @router.patch(
     "/{incident_id}",
     response_model=IncidentResponse,
@@ -68,12 +68,13 @@ def update_incident(
     data: IncidentUpdate,
     db: Session = Depends(get_db),
 ):
-    service = IncidentService(db)
+    service = IncidentService(db)  # pyright: ignore[reportCallIssue]
 
     return service.update_incident(
         incident_id,
         data,
     )
+
 
 @router.delete(
     "/{incident_id}",
@@ -83,7 +84,7 @@ def delete_incident(
     incident_id: int,
     db: Session = Depends(get_db),
 ):
-    service = IncidentService(db)
+    service = IncidentService(db)  # pyright: ignore[reportCallIssue]
 
     service.delete_incident(incident_id)
 

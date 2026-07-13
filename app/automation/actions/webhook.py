@@ -3,10 +3,12 @@ from sqlalchemy.orm import Session
 
 from app.automation.base import AutomationAction
 from app.models.incident import Incident
+from app.monitoring.service import MonitoringService
 from app.services.automation_run import AutomationRunService
 
 
 class WebhookAction(AutomationAction):
+
     def __init__(
         self,
         action_name: str,
@@ -39,6 +41,7 @@ class WebhookAction(AutomationAction):
         print("=" * 50)
 
         try:
+
             response = httpx.post(
                 self.url,
                 json=payload,
@@ -47,7 +50,7 @@ class WebhookAction(AutomationAction):
 
             response.raise_for_status()
 
-            print(f"Status Code: {response.status_code}")
+            MonitoringService.webhook_success()
 
             AutomationRunService(db).log(
                 incident_id=incident.id,
@@ -56,31 +59,11 @@ class WebhookAction(AutomationAction):
                 message=f"HTTP {response.status_code}",
             )
 
-        except httpx.HTTPStatusError as e:
-
-            print(f"HTTP Error: {e.response.status_code}")
-
-            AutomationRunService(db).log(
-                incident_id=incident.id,
-                action_name=self.action_name,
-                status="FAILED",
-                message=f"HTTP {e.response.status_code}",
-            )
-
-        except httpx.RequestError as e:
-
-            print(f"Request Error: {e}")
-
-            AutomationRunService(db).log(
-                incident_id=incident.id,
-                action_name=self.action_name,
-                status="FAILED",
-                message=str(e),
-            )
+            print(f"Status Code: {response.status_code}")
 
         except Exception as e:
 
-            print(f"Unexpected Error: {e}")
+            MonitoringService.webhook_failure()
 
             AutomationRunService(db).log(
                 incident_id=incident.id,
@@ -88,5 +71,9 @@ class WebhookAction(AutomationAction):
                 status="FAILED",
                 message=str(e),
             )
+
+            print(f"Webhook Error: {e}")
+
+            raise
 
         print("=" * 50)
