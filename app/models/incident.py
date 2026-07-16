@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, Enum
+from sqlalchemy import JSON, Column, String, Text, Enum
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database.base import Base
 
@@ -61,4 +61,9 @@ class Incident(Base):
         String(255),
         nullable=True,
         index=True,
+    )
+
+    rag_sources = mapped_column(
+        JSON,
+        nullable=True,
     )

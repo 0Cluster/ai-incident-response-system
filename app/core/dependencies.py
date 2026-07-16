@@ -9,7 +9,10 @@ from app.pipelines.incident import IncidentPipeline
 from app.repositories.incident import IncidentRepository
 from app.services.incident import IncidentService
 from app.webhooks.service import WebhookService
+from functools import lru_cache
 
+from app.rag.embeddings import EmbeddingService
+from app.rag.retriever import Retriever
 
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
@@ -19,6 +22,26 @@ def get_db() -> Generator[Session, None, None]:
     finally:
         db.close()
 
+@lru_cache
+def get_embedding_service() -> EmbeddingService:
+
+    return EmbeddingService()
+
+
+@lru_cache
+def get_retriever() -> Retriever:
+
+    return Retriever(
+        get_embedding_service(),
+    )
+
+
+@lru_cache
+def get_incident_analyzer() -> IncidentAnalyzer:
+
+    return IncidentAnalyzer(
+        get_retriever(),
+    )
 
 def get_incident_repository(
     db: Session = Depends(get_db),
@@ -33,7 +56,7 @@ def get_incident_service(
 ) -> IncidentService:
     return IncidentService(
         repository=repository,
-        analyzer=IncidentAnalyzer(),
+        analyzer=get_incident_analyzer(),
     )
 
 
@@ -61,3 +84,4 @@ def get_webhook_service(
         pipeline=pipeline,
         repository=repository,
     )
+
