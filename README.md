@@ -1,227 +1,445 @@
+# AI Incident Response System
 
-# AI Incident Response System (AIRS)
+An AI-powered Incident Response Platform that automatically receives alerts from monitoring systems, analyzes incidents using Google Gemini with Retrieval-Augmented Generation (RAG), executes automated remediation workflows, and provides complete observability through Prometheus and Grafana.
 
-> **An AI-powered incident response platform that detects infrastructure issues, performs automated diagnostics, analyzes logs using Large Language Models (LLMs), recommends remediation actions, and generates professional incident reports.**
-
-> 🚧 **Status:** Under Development
-
----
-
-## Why This Project?
-
-In modern production environments, engineers spend valuable time investigating incidents by manually checking logs, monitoring metrics, identifying root causes, creating tickets, and documenting resolutions.
-
-AIRS automates this workflow to reduce response time and improve operational efficiency.
+The project demonstrates how modern AI can be integrated into an incident management pipeline to reduce manual effort, improve response time, and provide context-aware recommendations using organization-specific runbooks.
 
 ---
 
 # Features
 
-### Current (MVP)
-
-* Incident detection through webhook alerts
-* REST API built with FastAPI
-* Incident management system
-* PostgreSQL database integration
-* Automated system diagnostics
-* Log collection and parsing
-* AI-powered root cause analysis
-* AI-generated remediation suggestions
-* Rule-based decision engine
-* Professional incident report generation
-
----
-
-### Planned Enterprise Features
-
-* RAG-powered incident knowledge base
-* Similar incident search
-* GitHub commit correlation
-* Deployment rollback recommendations
-* Human approval workflow
-* Automated remediation workflows
-* Prometheus monitoring integration
-* Grafana dashboard
-* Slack / Microsoft Teams notifications
-* Jira ticket creation
-* PDF incident reports
-* Predictive incident detection
-* Multi-agent AI architecture
-
----
-
-# System Workflow
-
-```text
-Infrastructure Alert
-        │
-        ▼
-FastAPI Alert Receiver
-        │
-        ▼
-Store Incident
-        │
-        ▼
-Collect Diagnostics
-        │
-        ▼
-Collect Logs
-        │
-        ▼
-AI Root Cause Analysis
-        │
-        ▼
-Decision Engine
-        │
-        ▼
-Recommendation / Auto Remediation
-        │
-        ▼
-Generate Incident Report
-```
+* 🚨 Grafana webhook integration
+* 🔍 Fingerprint-based incident deduplication
+* 📊 Incident lifecycle management
+* 🤖 AI-powered incident analysis with Google Gemini
+* 📚 Retrieval-Augmented Generation (RAG)
+* ⚡ Background processing with Celery
+* 🔄 Redis-backed task queue
+* 🛠 Configurable automation engine
+* 📈 Prometheus metrics
+* 📉 Grafana dashboards
+* 🗄 PostgreSQL persistence
+* 📜 Automation execution logs
+* 📖 Explainable AI with retrieved knowledge sources
 
 ---
 
 # Tech Stack
 
-| Category         | Technologies           |
-| ---------------- | ---------------------- |
-| Language         | Python 3.12+           |
-| Backend          | FastAPI                |
-| Database         | PostgreSQL             |
-| ORM              | SQLAlchemy             |
-| Migrations       | Alembic                |
-| Background Tasks | Celery                 |
-| Queue            | Redis                  |
-| AI               | Ollama, OpenAI, Gemini |
-| Monitoring       | Prometheus             |
-| Visualization    | Grafana                |
-| Automation       | n8n                    |
-| Containerization | Docker, Docker Compose |
-| Testing          | Pytest                 |
-| Version Control  | Git & GitHub           |
+## Backend
+
+* FastAPI
+* SQLAlchemy
+* PostgreSQL
+* Alembic
+* Pydantic
+
+## AI
+
+* Google Gemini 2.5 Flash
+* Sentence Transformers
+* ChromaDB
+
+## Background Processing
+
+* Celery
+* Redis
+
+## Monitoring
+
+* Grafana
+* Prometheus
+* Node Exporter
+
+---
+
+# System Architecture
+
+```text
+                                ┌─────────────────────┐
+                                │    Prometheus       │
+                                │ Collects Metrics    │
+                                └─────────┬───────────┘
+                                          │
+                                          ▼
+                                ┌─────────────────────┐
+                                │      Grafana        │
+                                │ Dashboards & Alerts │
+                                └─────────┬───────────┘
+                                          │
+                                   Webhook Notification
+                                          │
+                                          ▼
+                            ┌─────────────────────────────┐
+                            │       FastAPI API           │
+                            │     Webhook Endpoints       │
+                            └─────────────┬───────────────┘
+                                          │
+                                          ▼
+                           Fingerprint Deduplication
+                                          │
+                     ┌────────────────────┴───────────────────┐
+                     │                                        │
+              Existing Incident                       New Incident
+                     │                                        │
+             Update Lifecycle                     Create Incident
+                     │                                        │
+                     └────────────────────┬───────────────────┘
+                                          ▼
+                                 Celery Background Task
+                                          │
+                 ┌────────────────────────┴─────────────────────┐
+                 ▼                                              ▼
+          RAG Retrieval                                  AI Analysis
+                 │                                              │
+          ChromaDB Vector DB                           Google Gemini
+                 ▲                                              │
+                 │                                              │
+        Internal Runbooks (.md)                                │
+                 └────────────────────────┬─────────────────────┘
+                                          ▼
+                              Summary • Severity • Recommendation
+                                          │
+                                          ▼
+                                Automation Engine
+                                          │
+              ┌──────────────┬──────────────┬──────────────┐
+              ▼              ▼              ▼
+         Log Action     Execute Script   HTTP Webhook
+              │              │              │
+              └──────────────┴──────────────┘
+                             │
+                             ▼
+                        PostgreSQL
+                             │
+                             ▼
+                     Prometheus Metrics
+                             │
+                             ▼
+                      Grafana Dashboard
+```
 
 ---
 
 # Project Structure
 
 ```text
-ai-incident-response-system/
-
 app/
-│
-├── api/
+├── ai/
+├── automation/
 ├── core/
 ├── database/
-├── models/
+├── monitoring/
+├── pipelines/
+├── rag/
+├── repositories/
 ├── schemas/
 ├── services/
-├── tasks/
-├── utils/
-├── prompts/
+├── webhooks/
 └── main.py
 
-tests/
-docs/
-scripts/
-docker/
-
-README.md
-.env.example
+knowledge/
+├── memory.md
+├── cpu.md
+├── disk.md
+└── postgres.md
 ```
 
 ---
 
-# Core Modules
+# Workflow
 
-## 1. Monitoring
+1. Grafana detects an infrastructure issue.
+2. Grafana sends a webhook notification.
+3. FastAPI validates and parses the webhook.
+4. Incident fingerprint is checked.
+5. Existing incidents are updated or new incidents are created.
+6. Celery starts background processing.
+7. Relevant runbooks are retrieved from ChromaDB.
+8. Gemini analyzes the incident using retrieved context.
+9. AI generates:
 
-Receives alerts from monitoring systems through webhooks.
-
-Examples:
-
-* Service Down
-* High CPU Usage
-* Memory Exhaustion
-* Database Connection Failure
-
----
-
-## 2. Alert Receiver
-
-* Receives infrastructure alerts
-* Validates payloads
-* Stores incidents
-* Creates incident timeline
+   * Summary
+   * Severity
+   * Recommendation
+10. Automation rules execute.
+11. Results are stored in PostgreSQL.
+12. Prometheus collects metrics.
+13. Grafana visualizes the entire pipeline.
 
 ---
 
-## 3. Diagnostics Engine
+# Incident Lifecycle
 
-Automatically collects:
+```text
+OPEN
+ │
+ ├── AI Analysis
+ │
+ ├── Automation
+ │
+ ▼
+RESOLVED
+ │
+ ▼
+CLOSED
+```
 
-* CPU usage
-* Memory usage
-* Disk usage
-* Network information
-* Running processes
-* Operating system details
-
----
-
-## 4. Log Collector
-
-Collects logs from:
-
-* Application logs
-* Docker containers
-* System logs
-* Nginx
-* Apache
-
-Extracts:
-
-* Errors
-* Stack traces
-* Warnings
-* Timeout events
+Analysis status and automation status are tracked independently from the incident lifecycle.
 
 ---
 
-## 5. AI Analysis Engine
+# AI Analysis
 
-Uses LLMs to generate:
+Google Gemini analyzes every incident and produces structured JSON containing:
 
-* Root cause analysis
+* Incident summary
 * Severity classification
-* Confidence score
-* Executive summary
-* Recommended remediation
+* Actionable recommendation
+
+The application validates the AI response using a strict schema before storing the result.
 
 ---
 
-## 6. Decision Engine
+# Retrieval-Augmented Generation (RAG)
 
-Evaluates AI recommendations using predefined safety rules.
+The project uses RAG to ground AI responses in internal operational knowledge.
 
-Possible outcomes:
+Workflow:
 
-* Auto remediation
-* Human approval required
-* Escalate to engineer
+```text
+Incident
+    │
+    ▼
+Embedding
+    │
+    ▼
+ChromaDB Similarity Search
+    │
+    ▼
+Relevant Runbooks
+    │
+    ▼
+Gemini
+    │
+    ▼
+Recommendation
+```
+
+Retrieved runbook identifiers are stored alongside each incident to improve explainability.
 
 ---
 
-# Future Enhancements
+# Automation Engine
 
-* AI Memory using RAG
-* Similar Incident Retrieval
-* GitHub Commit Analysis
-* Deployment Rollback Detection
-* Human Approval Workflow
-* Predictive Failure Detection
-* Voice Alert Notifications
-* Multi-Agent AI Architecture
+Automation rules execute after AI analysis completes.
+
+Supported actions:
+
+* Log incident information
+* Execute scripts
+* Send HTTP webhooks
+
+Each execution records:
+
+* Action name
+* Status
+* Execution duration
+* Success or failure
+* Error details
 
 ---
 
+# Background Processing
+
+Celery executes long-running tasks asynchronously, including:
+
+* AI analysis
+* Automation execution
+
+Redis acts as the Celery broker, ensuring webhook requests return immediately while processing continues in the background.
+
+---
+
+# Monitoring & Metrics
+
+The application exports Prometheus metrics covering:
+
+## Incident Metrics
+
+* Total incidents
+* Incident severity
+* Incident lifecycle status
+* Resolved incidents
+
+## AI Metrics
+
+* Analysis started
+* Analysis completed
+* Analysis failed
+* Analysis duration
+
+## Automation Metrics
+
+* Automation started
+* Automation completed
+* Automation failed
+* Execution duration
+
+## Webhook Metrics
+
+* Requests received
+* Successful requests
+* Failed requests
+
+---
+
+# Redis Metrics
+
+Redis is also used to maintain lightweight application counters.
+
+Tracked counters include:
+
+* Total incidents
+* AI analyses
+* Successful AI analyses
+* Failed AI analyses
+* Automation executions
+* Successful automations
+* Failed automations
+* Webhook successes
+* Webhook failures
+
+Metric Flow:
+
+```text
+Application Event
+      │
+      ▼
+Redis Counter
+      │
+      ▼
+Application Metrics
+      │
+      ▼
+Prometheus
+      │
+      ▼
+Grafana
+```
+
+---
+
+# External Integrations
+
+| Service       | Purpose                           |
+| ------------- | --------------------------------- |
+| Grafana       | Alert generation and dashboards   |
+| Prometheus    | Metrics collection                |
+| Node Exporter | Host metrics                      |
+| Google Gemini | AI-powered analysis               |
+| ChromaDB      | Vector database for RAG           |
+| PostgreSQL    | Persistent storage                |
+| Redis         | Celery broker and metric counters |
+| Celery        | Background task execution         |
+
+---
+
+# Installation
+
+Clone the repository
+
+```bash
+git clone https://github.com/<username>/ai-incident-response-system.git
+
+cd ai-incident-response-system
+```
+
+Create a virtual environment
+
+```bash
+uv venv
+```
+
+Activate it
+
+Linux/macOS
+
+```bash
+source .venv/bin/activate
+```
+
+Windows
+
+```powershell
+.venv\Scripts\activate
+```
+
+Install dependencies
+
+```bash
+uv sync
+```
+
+Run migrations
+
+```bash
+alembic upgrade head
+```
+
+Index the knowledge base
+
+```bash
+python -m app.rag.ingest
+```
+
+Start the application
+
+```bash
+uv run uvicorn app.main:app --reload
+```
+
+Interactive API documentation:
+
+```text
+http://localhost:8000/docs
+```
+
+---
+
+# Docker (Planned)
+
+The project is designed to be containerized using Docker Compose with services for:
+
+* FastAPI
+* PostgreSQL
+* Redis
+* Celery Worker
+* Prometheus
+* Grafana
+
+---
+
+# Future Improvements
+
+* React dashboard
+* Slack / Microsoft Teams notifications
+* Email notifications
+* Multi-provider LLM support
+* Kubernetes deployment
+* Authentication & Authorization
+* Advanced automation workflows
+* Role-based access control
+* Incident timeline visualization
+
+---
+
+# License
+
+This project is licensed under the MIT License.
+
+---
+
+# Author
+
+Developed as a portfolio and learning project demonstrating the integration of Artificial Intelligence, Retrieval-Augmented Generation, Automation, and Observability into a modern incident response platform.
