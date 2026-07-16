@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.enums import IncidentStatus
 from app.models.incident import Incident
 from app.repositories.base import BaseRepository
 
@@ -8,6 +9,20 @@ from app.repositories.base import BaseRepository
 class IncidentRepository(BaseRepository[Incident]):
     def __init__(self, db: Session):
         super().__init__(db, Incident)
+
+    def find_active_by_fingerprint(
+        self,
+        fingerprint: str,
+    ) -> Incident | None:
+
+        return (
+            self.db.query(Incident)
+            .filter(
+                Incident.fingerprint == fingerprint,
+                Incident.status != IncidentStatus.RESOLVED,
+            )
+            .first()
+        )
 
     def get_by_title(self, title: str) -> Incident | None:
         statement = select(Incident).where(Incident.title == title)

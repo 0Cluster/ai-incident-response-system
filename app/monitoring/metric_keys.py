@@ -32,3 +32,10 @@ class RedisMetricKeys:
 
     WEBHOOK_SUCCESS = "metrics:webhook:success"
     WEBHOOK_FAILURE = "metrics:webhook:failure"
+
+
+    #webhook
+
+
+    WEBHOOK_REQUESTS = "metrics:webhook:requests"
+    WEBHOOK_FAILURES = "metrics:webhook:failures"

@@ -7,7 +7,7 @@ from app.ai.analyzer import IncidentAnalyzer
 from app.automation.engine import AutomationEngine
 from app.celery_app import celery_app
 from app.database.session import SessionLocal
-from app.models.enums import IncidentStatus, Severity
+from app.models.enums import AnalysisStatus, IncidentStatus, Severity
 from app.monitoring.service import MonitoringService
 from app.repositories.incident import IncidentRepository
 
@@ -36,7 +36,7 @@ def analyze_incident(self, incident_id: int) -> None:
         if incident is None:
             return
 
-        incident.status = IncidentStatus.PROCESSING
+        incident.analysis_status = AnalysisStatus.RUNNING     
         repository.update(incident)
 
         MonitoringService.analysis_started()
@@ -56,7 +56,7 @@ def analyze_incident(self, incident_id: int) -> None:
         incident.ai_summary = analysis.summary
         incident.severity = Severity(analysis.severity)
         incident.recommendation = analysis.recommendation
-        incident.status = IncidentStatus.COMPLETED
+        incident.analysis_status = AnalysisStatus.COMPLETED
 
         repository.update(incident)
 
@@ -72,7 +72,6 @@ def analyze_incident(self, incident_id: int) -> None:
     except Exception:
 
         MonitoringService.analysis_failed()
-
         logger.exception(
             "Failed to analyze incident %s",
             incident_id,
@@ -80,7 +79,7 @@ def analyze_incident(self, incident_id: int) -> None:
 
         if "incident" in locals() and incident is not None:
 
-            incident.status = IncidentStatus.FAILED
+            incident.analysis_status = AnalysisStatus.FAILED
             repository.update(incident)
 
             if incident.severity is not None:

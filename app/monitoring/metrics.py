@@ -90,3 +90,17 @@ WEBHOOK_FAILURE = Gauge(
     "webhook_failure_total",
     "Failed webhook executions",
 )
+
+#webhooks 
+
+WEBHOOK_REQUESTS = Gauge(
+    "webhook_requests_total",
+    "Total webhook requests received",
+    ["source"],
+)
+
+WEBHOOK_FAILURES = Gauge(
+    "webhook_failures_total",
+    "Total failed webhook requests",
+    ["source"],
+)

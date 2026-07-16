@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
 
+    WEBHOOK_SECRET: str
     DATABASE_URL: str
     GEMINI_API_KEY: str
     REDIS_URL: str

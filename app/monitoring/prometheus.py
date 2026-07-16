@@ -1,7 +1,7 @@
 from fastapi import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.models.enums import AutomationAction, Severity
+from app.models.enums import AutomationAction, IncidentSource, Severity
 from app.monitoring.metric_keys import RedisMetricKeys
 from app.monitoring.metrics import (
     AI_FAILURES,
@@ -17,6 +17,8 @@ from app.monitoring.metrics import (
     INCIDENTS_CREATED,
     INCIDENTS_FAILED,
     WEBHOOK_FAILURE,
+    WEBHOOK_FAILURES,
+    WEBHOOK_REQUESTS,
     WEBHOOK_SUCCESS,
 )
 from app.monitoring.redis_metrics import redis_metrics
@@ -141,6 +143,26 @@ def metrics() -> Response:
             RedisMetricKeys.WEBHOOK_FAILURE
         )
     )
+
+# Webhooks
+    for source in IncidentSource:
+
+        WEBHOOK_REQUESTS.labels(
+            source=source.value,
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.WEBHOOK_REQUESTS}:{source.value}",
+            )
+        )
+
+        WEBHOOK_FAILURES.labels(
+            source=source.value,
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.WEBHOOK_FAILURES}:{source.value}",
+            )
+        )
+
 
     return Response(
         generate_latest(),

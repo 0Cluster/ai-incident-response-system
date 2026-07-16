@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import setup_logging
 from app.monitoring.prometheus import metrics
+from app.webhooks.router import router as webhook_router
 
 setup_logging()
 
@@ -23,7 +24,9 @@ app = FastAPI(
 def prometheus_metrics():
     return metrics()
 
+
 logger.info("Starting AI Incident Response System...")
+
 
 app.include_router(health_router)
 
@@ -32,7 +35,13 @@ app.include_router(
     prefix="/api/v1",
 )
 
+app.include_router(
+    webhook_router,
+    prefix="/api/v1",
+)
+
 register_exception_handlers(app)
+
 
 @app.get("/")
 def health() -> dict[str, str]:

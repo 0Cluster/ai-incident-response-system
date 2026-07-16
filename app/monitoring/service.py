@@ -1,4 +1,4 @@
-from app.models.enums import AutomationAction
+from app.models.enums import AutomationAction, IncidentSource
 from app.models.enums import Severity
 from app.monitoring.metric_keys import RedisMetricKeys
 from app.monitoring.redis_metrics import redis_metrics
@@ -99,3 +99,28 @@ class MonitoringService:
     def webhook_failure() -> None:
 
         redis_metrics.increment(RedisMetricKeys.WEBHOOK_FAILURE)
+
+
+    @staticmethod
+    def webhook_received(
+        source: IncidentSource,
+    ) -> None:
+
+        redis_metrics.increment(
+            f"{RedisMetricKeys.WEBHOOK_REQUESTS}:{source.value}",
+        )
+
+
+
+    @staticmethod
+    def webhook_failed(
+        source: IncidentSource,
+    ) -> None:
+
+        redis_metrics.increment(
+            f"{RedisMetricKeys.WEBHOOK_FAILURES}:{source.value}",
+        )
+
+
+
+

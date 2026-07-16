@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
-from app.core.dependencies import get_incident_service
+from app.core.dependencies import get_db, get_incident_pipeline
 from app.monitoring.service import MonitoringService
+from app.pipelines.incident import IncidentPipeline
 from app.schemas.incident import (
     IncidentCreate,
     IncidentResponse,
@@ -21,16 +21,11 @@ router = APIRouter(
 @router.post("/", response_model=IncidentResponse)
 def create_incident(
     data: IncidentCreate,
-    service: IncidentService = Depends(get_incident_service),
+    pipeline: IncidentPipeline = Depends(
+        get_incident_pipeline,
+    ),
 ):
-    incident = service.create_incident(data)
-    MonitoringService.incident_created(
-        incident.severity,
-    )
-
-    analyze_incident.delay(incident.id)  # pyright: ignore[reportAny, reportFunctionMemberAccess]
-
-    return incident
+    return pipeline.start(data)
 
 
 @router.get("/", response_model=list[IncidentResponse])

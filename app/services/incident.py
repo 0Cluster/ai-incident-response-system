@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.ai.analyzer import IncidentAnalyzer
-from app.models.enums import IncidentStatus, Severity
+from app.models.enums import AnalysisStatus, AutomationStatus, IncidentStatus, Severity
 from app.models.incident import Incident
 from app.repositories.incident import IncidentRepository
 from app.schemas.incident import IncidentCreate, IncidentUpdate
@@ -25,7 +25,13 @@ class IncidentService:
         incident = Incident(
             title=data.title,
             message=data.message,
-            status=IncidentStatus.PENDING,
+            status=IncidentStatus.OPEN,
+            analysis_status=AnalysisStatus.PENDING,
+            automation_status=AutomationStatus.PENDING,
+            severity=data.severity,
+            source = data.source,
+            fingerprint=data.fingerprint,
+
         )
 
         return self.repository.create(incident)
