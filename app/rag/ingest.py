@@ -15,7 +15,7 @@ collection = client.get_or_create_collection(
     "runbooks",
 )
 
-knowledge = Path("knowledge")
+knowledge = Path(__file__).parent / "knowledge"
 
 for file in knowledge.glob("*.md"):
 

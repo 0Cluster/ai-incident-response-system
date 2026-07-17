@@ -6,9 +6,12 @@ from sqlalchemy.orm import Session
 from app.ai.analyzer import IncidentAnalyzer
 from app.automation.engine import AutomationEngine
 from app.celery_app import celery_app
+from app.core.providers import get_incident_analyzer
 from app.database.session import SessionLocal
 from app.models.enums import AnalysisStatus, IncidentStatus, Severity
 from app.monitoring.service import MonitoringService
+from app.rag.embeddings import EmbeddingService
+from app.rag.retriever import Retriever
 from app.repositories.incident import IncidentRepository
 
 logger = logging.getLogger(__name__)
@@ -29,7 +32,8 @@ def analyze_incident(self, incident_id: int) -> None:
 
     try:
         repository = IncidentRepository(db)
-        analyzer = IncidentAnalyzer()
+
+        analyzer = get_incident_analyzer()
 
         incident = repository.get(incident_id)
 
@@ -57,6 +61,7 @@ def analyze_incident(self, incident_id: int) -> None:
         incident.severity = Severity(analysis.severity)
         incident.recommendation = analysis.recommendation
         incident.analysis_status = AnalysisStatus.COMPLETED
+        incident.rag_sources = analysis.sources
 
         repository.update(incident)
 
