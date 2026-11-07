@@ -8,13 +8,23 @@ from app.services.automation_run import AutomationRunService
 
 
 class ScriptAction(AutomationAction):
+    _FORBIDDEN_CHARS = (";", "|", "&", "$", "`", "\n", "\r")
+
     def __init__(
         self,
         action_name: str,
         script_path: str,
+        timeout: int = 60,
     ) -> None:
+        if not script_path or not script_path.strip():
+            raise ValueError("script_path must be a non-empty string")
+        if any(c in script_path for c in self._FORBIDDEN_CHARS):
+            raise ValueError("script_path contains forbidden shell characters")
+        if timeout is not None and (not isinstance(timeout, int) or timeout < 1 or timeout > 600):
+            raise ValueError("timeout must be an int between 1 and 600")
         self.action_name = action_name
         self.script_path = script_path
+        self.timeout = timeout
 
     def execute(
         self,
@@ -35,6 +45,7 @@ class ScriptAction(AutomationAction):
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=self.timeout,
             )
 
             print("Exit Code:", result.returncode)
@@ -48,6 +59,7 @@ class ScriptAction(AutomationAction):
                 print(result.stderr)
 
             AutomationRunService(db).log(
+                tenant_id=incident.tenant_id,
                 incident_id=incident.id,
                 action_name=self.action_name,
                 status="SUCCESS",
@@ -65,32 +77,51 @@ class ScriptAction(AutomationAction):
                 print(e.stderr)
 
             AutomationRunService(db).log(
+                tenant_id=incident.tenant_id,
                 incident_id=incident.id,
                 action_name=self.action_name,
                 status="FAILED",
                 message=f"Exit code {e.returncode}",
             )
+            raise
 
         except FileNotFoundError:
 
             print(f"Script not found: {self.script_path}")
 
             AutomationRunService(db).log(
+                tenant_id=incident.tenant_id,
                 incident_id=incident.id,
                 action_name=self.action_name,
                 status="FAILED",
                 message="Script file not found.",
             )
+            raise
+
+        except subprocess.TimeoutExpired:
+
+            print(f"Script timed out: {self.script_path}")
+
+            AutomationRunService(db).log(
+                tenant_id=incident.tenant_id,
+                incident_id=incident.id,
+                action_name=self.action_name,
+                status="FAILED",
+                message="Script timed out after 60s.",
+            )
+            raise
 
         except Exception as e:
 
             print(e)
 
             AutomationRunService(db).log(
+                tenant_id=incident.tenant_id,
                 incident_id=incident.id,
                 action_name=self.action_name,
                 status="FAILED",
                 message=str(e),
             )
+            raise
 
         print("=" * 50)

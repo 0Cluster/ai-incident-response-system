@@ -1,4 +1,5 @@
 from app.automation.actions.log import LogAction
+from app.automation.actions.slack import SlackAction
 from app.automation.actions.webhook import WebhookAction
 from app.automation.base import AutomationAction
 from app.automation.actions.script import ScriptAction
@@ -32,6 +33,9 @@ class ActionRegistry:
 registry = ActionRegistry()
 
 # Register all built-in actions
+# Custom actions: subclass AutomationAction (see slack.py docstring)
+# and add registry.register("<name>", MyAction) here.
 registry.register("log", LogAction)
 registry.register("script", ScriptAction)
 registry.register("webhook", WebhookAction)
+registry.register("slack", SlackAction)

@@ -16,6 +16,15 @@ from app.monitoring.metrics import (
     INCIDENTS_COMPLETED,
     INCIDENTS_CREATED,
     INCIDENTS_FAILED,
+    INCIDENT_RESOLUTION_AVERAGE_SECONDS,
+    INCIDENT_RESOLUTION_TOTAL_SECONDS,
+    LLM_REQUEST_LATENCY_SECONDS,
+    LLM_TOKENS_TOTAL,
+    QUEUE_WAIT_AVERAGE_SECONDS,
+    QUEUE_WAIT_TOTAL_SECONDS,
+    RETRIEVAL_FAILURES,
+    RETRIEVAL_LATENCY_SECONDS,
+    RETRIEVAL_REQUESTS,
     WEBHOOK_FAILURE,
     WEBHOOK_FAILURES,
     WEBHOOK_REQUESTS,
@@ -93,26 +102,44 @@ def metrics() -> Response:
     automation_total = 0
     automation_failures_total = 0
 
-    for action in AutomationAction:
+    seen_actions: set[str] = set()
 
+    def _sync_action(name: str) -> None:
+        nonlocal automation_total, automation_failures_total
+        if name in seen_actions:
+            return
+        seen_actions.add(name)
         runs = redis_metrics.get(
-            f"{RedisMetricKeys.AUTOMATION_RUNS}:{action.value}"
+            f"{RedisMetricKeys.AUTOMATION_RUNS}:{name}"
         )
 
         failures = redis_metrics.get(
-            f"{RedisMetricKeys.AUTOMATION_FAILURES}:{action.value}"
+            f"{RedisMetricKeys.AUTOMATION_FAILURES}:{name}"
         )
 
         AUTOMATION_RUNS.labels(
-            action=action.value,
+            action=name,
         ).set(runs)
 
         AUTOMATION_FAILURES.labels(
-            action=action.value,
+            action=name,
         ).set(failures)
 
         automation_total += runs
         automation_failures_total += failures
+
+    for action in AutomationAction:
+        _sync_action(action.value)
+
+    # Custom registry actions (not in the enum) stored under the same
+    # Redis prefix — discover dynamically so /metrics exposes them.
+    try:
+        prefix = f"{redis_metrics._key(RedisMetricKeys.AUTOMATION_RUNS)}:"
+        for key in redis_metrics.client.scan_iter(f"{prefix}*", count=200):
+            name = key.decode() if isinstance(key, bytes) else str(key)
+            _sync_action(name.removeprefix(prefix))
+    except Exception:
+        pass
 
     automation_time = redis_metrics.get(
         RedisMetricKeys.AUTOMATION_TIME
@@ -163,6 +190,126 @@ def metrics() -> Response:
             )
         )
 
+
+    # ---------------------------------------------------------
+    # Incident Resolution Time
+    # ---------------------------------------------------------
+
+    for severity in Severity:
+        INCIDENT_RESOLUTION_TOTAL_SECONDS.labels(
+            severity=severity.value,
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.INCIDENT_RESOLUTION_TIME}:{severity.value}"
+            )
+        )
+        INCIDENT_RESOLUTION_AVERAGE_SECONDS.labels(
+            severity=severity.value,
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.INCIDENT_RESOLUTION_TIME}:{severity.value}"
+            )
+        )
+
+    # ---------------------------------------------------------
+    # LLM Metrics
+    # ---------------------------------------------------------
+
+    # Discover models from Redis keys
+    seen_models: set[str] = set()
+    try:
+        prefix = f"{redis_metrics._key(RedisMetricKeys.LLM_TOKENS_INPUT)}:"
+        for key in redis_metrics.client.scan_iter(f"{prefix}*", count=200):
+            name = key.decode() if isinstance(key, bytes) else str(key)
+            model = name.removeprefix(prefix)
+            seen_models.add(model)
+    except Exception:
+        pass
+
+    for model in seen_models:
+        LLM_TOKENS_TOTAL.labels(
+            model=model,
+            type="input",
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.LLM_TOKENS_INPUT}:{model}"
+            )
+        )
+        LLM_TOKENS_TOTAL.labels(
+            model=model,
+            type="output",
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.LLM_TOKENS_OUTPUT}:{model}"
+            )
+        )
+        LLM_REQUEST_LATENCY_SECONDS.labels(
+            model=model,
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.LLM_LATENCY}:{model}"
+            )
+        )
+
+    # ---------------------------------------------------------
+    # RAG Retrieval Metrics
+    # ---------------------------------------------------------
+
+    for backend in ("chroma", "pgvector"):
+        RETRIEVAL_REQUESTS.labels(
+            backend=backend,
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.RETRIEVAL_REQUESTS}:{backend}"
+            )
+        )
+        RETRIEVAL_FAILURES.labels(
+            backend=backend,
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.RETRIEVAL_FAILURES}:{backend}"
+            )
+        )
+        RETRIEVAL_LATENCY_SECONDS.labels(
+            backend=backend,
+        ).set(
+            redis_metrics.get(
+                f"{RedisMetricKeys.RETRIEVAL_LATENCY}:{backend}"
+            )
+        )
+
+    # ---------------------------------------------------------
+    # Queue Wait Time
+    # ---------------------------------------------------------
+
+    seen_queues: set[str] = set()
+    try:
+        prefix = f"{redis_metrics._key(RedisMetricKeys.QUEUE_WAIT_TIME)}:"
+        for key in redis_metrics.client.scan_iter(f"{prefix}*", count=200):
+            name = key.decode() if isinstance(key, bytes) else str(key)
+            queue = name.removeprefix(prefix)
+            seen_queues.add(queue)
+    except Exception:
+        pass
+
+    queue_wait_total = 0.0
+    queue_wait_count = 0
+
+    for queue in seen_queues:
+        wait_time = redis_metrics.get(
+            f"{RedisMetricKeys.QUEUE_WAIT_TIME}:{queue}"
+        )
+        QUEUE_WAIT_TOTAL_SECONDS.labels(
+            queue=queue,
+        ).set(wait_time)
+        queue_wait_total += wait_time
+        queue_wait_count += 1
+
+    QUEUE_WAIT_AVERAGE_SECONDS.labels(
+        queue="all",
+    ).set(
+        queue_wait_total / queue_wait_count if queue_wait_count else 0
+    )
 
     return Response(
         generate_latest(),

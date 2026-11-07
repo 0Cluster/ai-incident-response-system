@@ -1,0 +1,26 @@
+FROM python:3.14-slim
+WORKDIR /app
+# PyTorch/onnxruntime (pulled in by sentence-transformers/chromadb) need
+# libgomp at runtime; the slim image does not include it.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install uv
+COPY pyproject.toml uv.lock README.md alembic.ini ./
+COPY app ./app
+COPY scripts ./scripts
+COPY migrations ./migrations
+RUN uv sync --frozen --no-dev \
+    && uv pip uninstall torch nvidia-cublas nvidia-cuda-cupti nvidia-cuda-nvrtc \
+      nvidia-cuda-runtime nvidia-cudnn-cu13 nvidia-cufft nvidia-cufile \
+      nvidia-curand nvidia-cusolver nvidia-cusparse nvidia-cusparselt-cu13 \
+      nvidia-nccl-cu13 nvidia-nvjitlink nvidia-nvshmem-cu13 nvidia-nvtx \
+    && uv pip install --python /app/.venv/bin/python --reinstall torch \
+      --index-url https://download.pytorch.org/whl/cpu
+# Run the already-synced virtualenv directly. `uv run` defaults to the dev
+# dependency group and would try to install pytest/ruff at container startup.
+ENV PATH="/app/.venv/bin:$PATH"
+ENV UV_NO_DEV=1
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

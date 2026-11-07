@@ -42,6 +42,8 @@ class IncidentResponse(BaseModel):
     recommendation: str | None
 
     source: IncidentSource
+    fingerprint: str | None = None
+    rag_sources: list[str] | None = None
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -49,5 +51,14 @@ class IncidentResponse(BaseModel):
 
 
 class IncidentUpdate(BaseModel):
-    title: str | None = None
-    message: str | None = None
+    title: str | None = Field(default=None, min_length=3, max_length=255)
+    message: str | None = Field(default=None, min_length=1)
+    status: IncidentStatus | None = None
+    severity: Severity | None = None
+
+
+class PaginatedIncidents(BaseModel):
+    items: list[IncidentResponse]
+    total: int
+    limit: int
+    offset: int

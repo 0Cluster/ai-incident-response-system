@@ -1,15 +1,11 @@
 from collections.abc import Generator
-from functools import lru_cache
 
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from app.ai.analyzer import IncidentAnalyzer
 from app.core.providers import get_incident_analyzer
 from app.database.session import SessionLocal
 from app.pipelines.incident import IncidentPipeline
-from app.rag.embeddings import EmbeddingService
-from app.rag.retriever import Retriever
 from app.repositories.incident import IncidentRepository
 from app.services.incident import IncidentService
 from app.webhooks.service import WebhookService
@@ -20,6 +16,9 @@ def get_db() -> Generator[Session, None, None]:
 
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

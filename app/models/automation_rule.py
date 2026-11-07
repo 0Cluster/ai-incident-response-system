@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Integer, JSON, String
+from sqlalchemy import Boolean, ForeignKey, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -8,6 +8,11 @@ class AutomationRule(Base):
     __tablename__ = "automation_rules"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     severity: Mapped[str] = mapped_column(String(20))
 

@@ -35,9 +35,15 @@ class AutomationEngine:
             db,
         ).get_actions(
             incident.severity.value,
+            incident.tenant_id,
         )
 
         if not rules:
+            logger.info(
+                "No enabled automation rules for severity %s (incident %s)",
+                incident.severity.value,
+                incident.id,
+            )
             incident.automation_status = AutomationStatus.SUCCESS
             db.commit()
             return
@@ -58,21 +64,50 @@ class AutomationEngine:
                 )
                 continue
 
-            automation = action_class(
-                **rule.config,
+            # ``continue_on_failure`` is an engine-level option, not an
+            # action constructor argument. Remove it before building the
+            # action so per-rule fail-fast opt-out works for every action.
+            action_config = dict(rule.config or {})
+            continue_on_failure = bool(
+                action_config.pop("continue_on_failure", False)
             )
 
-            action = AutomationAction(
-                rule.action_name,
-            )
+            try:
+                automation = action_class(
+                    action_name=rule.action_name,
+                    **action_config,
+                )
+            except TypeError as e:
+                logger.warning(
+                    "Rule %s has invalid config: %s",
+                    rule.id,
+                    e,
+                )
+                continue
+
+            # Custom actions may not be in the AutomationAction enum;
+            # metrics accept the raw name string.
+            try:
+                action: AutomationAction | str = AutomationAction(
+                    rule.action_name,
+                )
+                action_label = action.value
+            except ValueError:
+                action = rule.action_name
+                action_label = rule.action_name
 
             start = time.perf_counter()
 
+            # Metrics must never break state transitions: Redis outage
+            # would otherwise leave automation stuck at RUNNING.
             try:
                 MonitoringService.automation_started(
                     action,
                 )
+            except Exception:
+                logger.warning("automation_started metric failed", exc_info=True)
 
+            try:
                 automation.execute(
                     incident,
                     db,
@@ -81,24 +116,42 @@ class AutomationEngine:
             except Exception:
                 logger.exception(
                     "Automation '%s' failed",
-                    action.value,
+                    action_label,
                 )
 
+                try:
+                    MonitoringService.automation_failed(
+                        action,
+                    )
+                except Exception:
+                    logger.warning("automation_failed metric failed", exc_info=True)
+
+                if continue_on_failure:
+                    continue
+
+                # The failed flush poisoned this session: roll back the
+                # failed INSERT before persisting FAILED, else the commit
+                # raises PendingRollbackError and status stays RUNNING.
+                db.rollback()
                 incident.automation_status = AutomationStatus.FAILED
-                db.commit()
-
-                MonitoringService.automation_failed(
-                    action,
-                )
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.exception("Failed to persist FAILED status")
+                    raise
 
                 raise
 
             else:
                 duration = time.perf_counter() - start
 
-                MonitoringService.automation_completed(
-                    duration,
-                )
+                try:
+                    MonitoringService.automation_completed(
+                        duration,
+                    )
+                except Exception:
+                    logger.warning("automation_completed metric failed", exc_info=True)
 
         incident.automation_status = AutomationStatus.SUCCESS
         db.commit()

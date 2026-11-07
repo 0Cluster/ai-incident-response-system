@@ -57,11 +57,18 @@ logs/
 *.sqlite
 *.sqlite3
 
+# Derived Chroma vector index (rebuild with `python -m app.rag.ingest`)
+app/rag/chroma_db/
+
 # PostgreSQL data (local Docker volume if used)
 postgres_data/
 
 # Redis data
 redis_data/
+
+# Celery beat scheduler state
+celerybeat-schedule
+celerybeat-schedule-*
 
 # ===========================
 # Testing

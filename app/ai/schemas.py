@@ -12,3 +12,9 @@ class IncidentAnalysis(BaseModel):
     recommendation: str
 
     sources: list[str] = []
+
+    confidence: float | None = None
+
+    model: str | None = None
+
+    abstained: bool = False

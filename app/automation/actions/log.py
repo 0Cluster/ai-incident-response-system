@@ -25,8 +25,9 @@ class LogAction(AutomationAction):
         print("=" * 50)
 
         AutomationRunService(db).log(
+            tenant_id=incident.tenant_id,
             incident_id=incident.id,
-            action_name="log",
+            action_name=self.action_name,
             status="SUCCESS",
             message="Incident logged successfully.",
         )

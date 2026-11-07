@@ -1,0 +1,41 @@
+# Keep the API image build context small and avoid shipping local state.
+.git
+.gitignore
+.github
+.venv
+venv
+env
+**/__pycache__
+**/*.py[cod]
+**/*.so
+*.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+coverage.xml
+
+# Local secrets and logs
+.env
+.env.*
+!.env.example
+*.log
+celerybeat-schedule
+celerybeat-schedule-*
+
+# Local data and derived indexes
+*.db
+*.sqlite
+*.sqlite3
+app/rag/chroma_db
+postgres_data
+redis_data
+
+# The API image does not need the frontend, tests, or docs.
+frontend
+tests
+docs
+site
+tmp
+temp

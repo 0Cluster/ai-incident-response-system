@@ -18,10 +18,14 @@ class BaseRepository(Generic[ModelType]):
         self.model = model
 
     def create(self, obj: ModelType) -> ModelType:
-        self.db.add(obj)
-        self.db.commit()
-        self.db.refresh(obj)
-        return obj
+        try:
+            self.db.add(obj)
+            self.db.commit()
+            self.db.refresh(obj)
+            return obj
+        except Exception:
+            self.db.rollback()
+            raise
 
     def get(self, obj_id: int) -> ModelType | None:
         return self.db.get(self.model, obj_id)
@@ -32,5 +36,9 @@ class BaseRepository(Generic[ModelType]):
         return list(result.scalars().all())
 
     def delete(self, obj: ModelType) -> None:
-        self.db.delete(obj)
-        self.db.commit()
+        try:
+            self.db.delete(obj)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise

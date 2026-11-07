@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import Severity
 
@@ -17,29 +17,40 @@ class CustomWebhookRequest(BaseModel):
 
     severity: Severity = Severity.UNKNOWN
 
+    fingerprint: str | None = Field(default=None, max_length=255)
+
 
 class GrafanaAnnotations(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     summary: str | None = None
+    description: str | None = None
 
 
 class GrafanaLabels(BaseModel):
-    alertname: str
+    model_config = ConfigDict(extra="ignore")
+
+    alertname: str = "grafana-alert"
     instance: str | None = None
     severity: str | None = None
 
 
 class GrafanaAlert(BaseModel):
-    status: str
-    fingerprint: str
-    labels: GrafanaLabels
-    annotations: GrafanaAnnotations
+    model_config = ConfigDict(extra="ignore")
+
+    status: str = "firing"
+    fingerprint: str = ""
+    labels: GrafanaLabels = GrafanaLabels()
+    annotations: GrafanaAnnotations = GrafanaAnnotations()
 
 
 class GrafanaWebhookRequest(BaseModel):
-    receiver: str
-    status: str
+    model_config = ConfigDict(extra="ignore")
 
-    alerts: list[GrafanaAlert]
+    receiver: str = "grafana"
+    status: str = "firing"
 
-    title: str
-    message: str
+    alerts: list[GrafanaAlert] = Field(default_factory=list)
+
+    title: str | None = None
+    message: str | None = None

@@ -1,15 +1,27 @@
 import logging
 
+import httpx
+
 from celery import Task
+from celery.exceptions import SoftTimeLimitExceeded
 
 logger = logging.getLogger(__name__)
+
+try:
+    from google.genai import errors as genai_errors
+
+    _GENAI_RETRY = (genai_errors.APIError,)
+except Exception:
+    _GENAI_RETRY = ()
 
 
 class BaseTask(Task):
     autoretry_for = (
         ConnectionError,
         TimeoutError,
-    )
+        SoftTimeLimitExceeded,
+        httpx.HTTPError,
+    ) + _GENAI_RETRY
 
     retry_backoff = True
     retry_backoff_max = 300

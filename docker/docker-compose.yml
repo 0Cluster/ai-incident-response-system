@@ -1,0 +1,247 @@
+services:
+  db:
+    # Official PostgreSQL 16 image with pgvector preinstalled. The initial
+    # migration runs CREATE EXTENSION IF NOT EXISTS vector.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: incident
+      POSTGRES_PASSWORD: incident
+      POSTGRES_DB: incidents
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U incident -d incidents"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://incident:incident@db:5432/incidents
+      REDIS_URL: redis://redis:6379/0
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-changeme}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql+psycopg://incident:incident@db:5432/incidents
+      REDIS_URL: redis://redis:6379/0
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-changeme}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-dummy}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      AI_MODEL: ${AI_MODEL:-gemini-2.5-flash}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
+      API_KEY: ${API_KEY:-}
+      LOG_JSON: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+      OTEL_SERVICE_NAME: airs-api
+    volumes:
+      # Cache the sentence-transformers model across API re-creations.
+      - hf_cache:/root/.cache/huggingface
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # python:3.14-slim does not ship curl; use the runtime itself.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info"]
+    volumes:
+      # Persist the embedded Chroma index and embedding model across
+      # worker re-creations. The API shares the Hugging Face model cache.
+      - chroma_data:/app/app/rag/chroma_db
+      - hf_cache:/root/.cache/huggingface
+    environment:
+      DATABASE_URL: postgresql+psycopg://incident:incident@db:5432/incidents
+      REDIS_URL: redis://redis:6379/0
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-changeme}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-dummy}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      AI_MODEL: ${AI_MODEL:-gemini-2.5-flash}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      LOG_JSON: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+      OTEL_SERVICE_NAME: airs-worker
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  beat:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    command: ["celery", "-A", "app.celery_app.celery_app", "beat", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://incident:incident@db:5432/incidents
+      REDIS_URL: redis://redis:6379/0
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-changeme}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-dummy}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      AI_MODEL: ${AI_MODEL:-gemini-2.5-flash}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      LOG_JSON: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+      OTEL_SERVICE_NAME: airs-beat
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        # Same-origin API requests are proxied by frontend/nginx.conf.
+        VITE_API_URL: /api/v1
+        # Optional legacy API key; prefer bearer tokens in production.
+        VITE_API_KEY: ${VITE_API_KEY:-}
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    command: ["--config", "/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4318:4318"   # OTLP HTTP
+      - "4317:4317"   # OTLP gRPC
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+volumes:
+  pgdata:
+  chroma_data:
+  hf_cache:

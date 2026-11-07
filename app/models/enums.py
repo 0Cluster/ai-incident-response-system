@@ -23,6 +23,19 @@ class AutomationStatus(StrEnum):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
 
+
+class OutboxStatus(StrEnum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    PUBLISHED = "PUBLISHED"
+    FAILED = "FAILED"
+
+
+class UserRole(StrEnum):
+    VIEWER = "VIEWER"
+    RESPONDER = "RESPONDER"
+    ADMIN = "ADMIN"
+
 class Severity(StrEnum):
     UNKNOWN = "UNKNOWN"
     LOW = "LOW"

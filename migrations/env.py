@@ -7,9 +7,18 @@ from app.core.config import settings
 from app.database.base import Base
 
 # Import models so Alembic can discover them
-from app.models import incident
-from app.models import automation_run
-from app.models import automation_rule
+from app.models import incident  # noqa: F401
+from app.models import automation_run  # noqa: F401
+from app.models import automation_rule  # noqa: F401
+from app.models import outbox  # noqa: F401
+from app.models import runbook  # noqa: F401
+from app.models import runbook_chunk  # noqa: F401
+from app.models import user  # noqa: F401
+
+from app.models import tenant  # noqa: F401
+from app.models import audit_log  # noqa: F401
+from app.models import workflow_state  # noqa: F401
+
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

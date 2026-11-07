@@ -13,9 +13,17 @@ class WebhookAction(AutomationAction):
         self,
         action_name: str,
         url: str,
+        headers: dict | None = None,
+        timeout: int = 10,
     ) -> None:
+        if not url or not url.strip():
+            raise ValueError("url must be a non-empty string")
+        if timeout is not None and (not isinstance(timeout, int) or timeout < 1 or timeout > 120):
+            raise ValueError("timeout must be an int between 1 and 120")
         self.action_name = action_name
         self.url = url
+        self.headers = headers or {}
+        self.timeout = timeout
 
     def execute(
         self,
@@ -45,7 +53,8 @@ class WebhookAction(AutomationAction):
             response = httpx.post(
                 self.url,
                 json=payload,
-                timeout=10,
+                headers=self.headers or None,
+                timeout=self.timeout,
             )
 
             response.raise_for_status()
@@ -53,6 +62,7 @@ class WebhookAction(AutomationAction):
             MonitoringService.webhook_success()
 
             AutomationRunService(db).log(
+                tenant_id=incident.tenant_id,
                 incident_id=incident.id,
                 action_name=self.action_name,
                 status="SUCCESS",
@@ -66,6 +76,7 @@ class WebhookAction(AutomationAction):
             MonitoringService.webhook_failure()
 
             AutomationRunService(db).log(
+                tenant_id=incident.tenant_id,
                 incident_id=incident.id,
                 action_name=self.action_name,
                 status="FAILED",

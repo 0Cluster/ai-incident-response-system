@@ -11,10 +11,10 @@ class MonitoringService:
 
     @staticmethod
     def incident_created(
-        severrity: Severity,
+        severity: Severity,
     ) -> None:
 
-        redis_metrics.increment(f"{RedisMetricKeys.INCIDENTS_CREATED}:{'UNKNOWN'}")
+        redis_metrics.increment(f"{RedisMetricKeys.INCIDENTS_CREATED}:{severity.value}")
 
     @staticmethod
     def incident_completed(
@@ -31,6 +31,17 @@ class MonitoringService:
     ) -> None:
 
         redis_metrics.increment(f"{RedisMetricKeys.INCIDENTS_FAILED}:{severity.value}")
+
+    @staticmethod
+    def incident_resolution_seconds(
+        severity: Severity,
+        seconds: float,
+    ) -> None:
+        """Record end-to-end incident resolution time."""
+        redis_metrics.increment_float(
+            f"{RedisMetricKeys.INCIDENT_RESOLUTION_TIME}:{severity.value}",
+            seconds,
+        )
 
     # ==========================================================
     # AI Metrics
@@ -58,23 +69,50 @@ class MonitoringService:
             seconds,
         )
 
+    @staticmethod
+    def llm_request(
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        latency_seconds: float,
+    ) -> None:
+        """Record LLM token usage and request latency."""
+        redis_metrics.increment_float(
+            f"{RedisMetricKeys.LLM_TOKENS_INPUT}:{model}",
+            input_tokens,
+        )
+        redis_metrics.increment_float(
+            f"{RedisMetricKeys.LLM_TOKENS_OUTPUT}:{model}",
+            output_tokens,
+        )
+        redis_metrics.increment_float(
+            f"{RedisMetricKeys.LLM_LATENCY}:{model}",
+            latency_seconds,
+        )
+
     # ==========================================================
     # Automation Metrics
     # ==========================================================
 
     @staticmethod
+    def _action_name(action: AutomationAction | str) -> str:
+        return action.value if isinstance(action, AutomationAction) else str(action)
+
+    @staticmethod
     def automation_started(
-        action: AutomationAction,
+        action: AutomationAction | str,
     ) -> None:
 
-        redis_metrics.increment(f"{RedisMetricKeys.AUTOMATION_RUNS}:{action.value}")
+        name = MonitoringService._action_name(action)
+        redis_metrics.increment(f"{RedisMetricKeys.AUTOMATION_RUNS}:{name}")
 
     @staticmethod
     def automation_failed(
-        action: AutomationAction,
+        action: AutomationAction | str,
     ) -> None:
 
-        redis_metrics.increment(f"{RedisMetricKeys.AUTOMATION_FAILURES}:{action.value}")
+        name = MonitoringService._action_name(action)
+        redis_metrics.increment(f"{RedisMetricKeys.AUTOMATION_FAILURES}:{name}")
 
     @staticmethod
     def automation_completed(
@@ -83,6 +121,37 @@ class MonitoringService:
 
         redis_metrics.increment_float(
             RedisMetricKeys.AUTOMATION_TIME,
+            seconds,
+        )
+
+    # ==========================================================
+    # RAG Metrics
+    # ==========================================================
+
+    @staticmethod
+    def retrieval_started(backend: str) -> None:
+        redis_metrics.increment(f"{RedisMetricKeys.RETRIEVAL_REQUESTS}:{backend}")
+
+    @staticmethod
+    def retrieval_failed(backend: str) -> None:
+        redis_metrics.increment(f"{RedisMetricKeys.RETRIEVAL_FAILURES}:{backend}")
+
+    @staticmethod
+    def retrieval_completed(backend: str, seconds: float) -> None:
+        redis_metrics.increment_float(
+            f"{RedisMetricKeys.RETRIEVAL_LATENCY}:{backend}",
+            seconds,
+        )
+
+    # ==========================================================
+    # Queue Metrics
+    # ==========================================================
+
+    @staticmethod
+    def queue_wait_seconds(queue: str, seconds: float) -> None:
+        """Record time a task spent waiting in the Celery queue."""
+        redis_metrics.increment_float(
+            f"{RedisMetricKeys.QUEUE_WAIT_TIME}:{queue}",
             seconds,
         )
 

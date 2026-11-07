@@ -1,9 +1,6 @@
 from typing import override
 
-from app.models.enums import (
-    IncidentSource,
-    WebhookProvider,
-)
+from app.models.enums import IncidentSource
 from app.schemas.incident import IncidentCreate
 from app.webhooks.models import WebhookIncident
 from app.webhooks.schemas import CustomWebhookRequest
@@ -25,6 +22,7 @@ class CustomWebhookAdapter(WebhookAdapter[CustomWebhookRequest]):
                     message=request.message,
                     severity=request.severity,
                     source=IncidentSource.CUSTOM,
+                    fingerprint=request.fingerprint,
                 ),
                 resolved=False,
             )

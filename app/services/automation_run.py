@@ -14,9 +14,12 @@ class AutomationRunService:
         action_name: str,
         status: str,
         message: str,
+        *,
+        tenant_id: int,
     ) -> AutomationRun:
 
         run = AutomationRun(
+            tenant_id=tenant_id,
             incident_id=incident_id,
             action_name=action_name,
             status=status,
@@ -24,3 +27,10 @@ class AutomationRunService:
         )
 
         return self.repository.create(run)
+
+    def list_by_incident(
+        self,
+        incident_id: int,
+        tenant_id: int,
+    ) -> list[AutomationRun]:
+        return self.repository.list_by_incident(incident_id, tenant_id)

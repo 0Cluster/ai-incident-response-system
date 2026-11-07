@@ -6,6 +6,7 @@ class RedisMetricKeys:
     INCIDENTS_CREATED = "metrics:incidents:created"
     INCIDENTS_COMPLETED = "metrics:incidents:completed"
     INCIDENTS_FAILED = "metrics:incidents:failed"
+    INCIDENT_RESOLUTION_TIME = "metrics:incidents:resolution_time"
 
     # ------------------------------------------------------------------
     # AI Metrics
@@ -17,6 +18,18 @@ class RedisMetricKeys:
     ANALYSIS_COUNT = "metrics:analysis:count"
     ANALYSIS_TIME = "metrics:analysis:time"
 
+    LLM_TOKENS_INPUT = "metrics:llm:tokens:input"
+    LLM_TOKENS_OUTPUT = "metrics:llm:tokens:output"
+    LLM_LATENCY = "metrics:llm:latency"
+
+    # ------------------------------------------------------------------
+    # RAG Metrics
+    # ------------------------------------------------------------------
+
+    RETRIEVAL_REQUESTS = "metrics:retrieval:requests"
+    RETRIEVAL_FAILURES = "metrics:retrieval:failures"
+    RETRIEVAL_LATENCY = "metrics:retrieval:latency"
+
     # ------------------------------------------------------------------
     # Automation Metrics
     # ------------------------------------------------------------------
@@ -25,6 +38,12 @@ class RedisMetricKeys:
     AUTOMATION_FAILURES = "metrics:automation:failures"
 
     AUTOMATION_TIME = "metrics:automation:time"
+
+    # ------------------------------------------------------------------
+    # Queue Metrics
+    # ------------------------------------------------------------------
+
+    QUEUE_WAIT_TIME = "metrics:queue:wait_time"
 
     # ------------------------------------------------------------------
     # Webhook Metrics
