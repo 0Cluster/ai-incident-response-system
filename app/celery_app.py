@@ -14,6 +14,8 @@ from app.models import automation_rule  # noqa: F401
 from app.models import automation_run  # noqa: F401
 from app.models import incident  # noqa: F401
 from app.models import outbox  # noqa: F401
+from app.models import remote_agent  # noqa: F401
+from app.models import remote_job  # noqa: F401
 from app.models import runbook  # noqa: F401
 from app.models import runbook_chunk  # noqa: F401
 from app.models import tenant  # noqa: F401
@@ -37,7 +39,13 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
-    imports=("app.tasks.incident", "app.tasks.reindex", "app.tasks.outbox", "app.tasks.investigation"),
+    imports=(
+        "app.tasks.incident",
+        "app.tasks.reindex",
+        "app.tasks.outbox",
+        "app.tasks.investigation",
+        "app.tasks.remote",
+    ),
     # Reliability
     task_track_started=True,
     task_time_limit=300,  # hard limit (5 min)
@@ -54,6 +62,10 @@ celery_app.conf.update(
         "dispatch-outbox": {
             "task": "dispatch_outbox",
             "schedule": 10.0,
+        },
+        "recover-remote-jobs": {
+            "task": "recover_remote_jobs",
+            "schedule": 30.0,
         },
     },
 )

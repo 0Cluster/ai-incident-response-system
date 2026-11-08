@@ -5,15 +5,29 @@ from typing import Any
 
 from app.models.enums import OutboxStatus
 from app.repositories.outbox import OutboxMessage, OutboxRepository
-from app.tasks.incident import analyze_incident
 
 logger = logging.getLogger(__name__)
 
-# Event type -> Celery task. Add new background work here and write the
+# Event type -> Celery task. Imports are intentionally lazy: the dependency
+# graph reaches core auth -> dependencies -> outbox before the remote task
+# module has finished importing. Add new background work here and write the
 # outbox row in the same transaction as the business row.
-TASKS: dict[str, Any] = {
-    "analyze_incident": analyze_incident,
-}
+# Kept for explicit injection in tests and for embedding deployments that
+# register a local task object. Normally this stays empty and resolution is
+# lazy to avoid an import cycle.
+TASKS: dict[str, Any] = {}
+
+
+def task_for_event(event_type: str) -> Any | None:
+    if event_type == "analyze_incident":
+        from app.tasks.incident import analyze_incident
+
+        return analyze_incident
+    if event_type == "process_remote_result":
+        from app.tasks.remote import process_remote_result
+
+        return process_remote_result
+    return None
 
 
 class OutboxService:
@@ -22,7 +36,7 @@ class OutboxService:
 
     @staticmethod
     def _publish(message: OutboxMessage) -> None:
-        task = TASKS.get(message.event_type)
+        task = TASKS.get(message.event_type) or task_for_event(message.event_type)
         if task is None:
             raise ValueError(f"unknown outbox event type: {message.event_type}")
         task.delay(**message.payload)

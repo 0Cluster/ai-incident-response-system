@@ -40,6 +40,7 @@ class IncidentService:
             severity=data.severity,
             source=data.source,
             fingerprint=data.fingerprint,
+            target_agent_id=data.target_agent_id,
         )
 
         db = self.repository.db

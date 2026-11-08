@@ -25,6 +25,10 @@ class IncidentCreate(BaseModel):
 
     source: IncidentSource = IncidentSource.MANUAL
     fingerprint: str | None = None
+    # Alert-supplied target. ``target_agent_ref`` is resolved tenant-scoped to
+    # a registered RemoteAgent; target_agent_id is used by internal callers.
+    target_agent_ref: str | None = Field(default=None, max_length=255)
+    target_agent_id: int | None = Field(default=None, ge=1)
 
 
 class IncidentResponse(BaseModel):
@@ -43,6 +47,7 @@ class IncidentResponse(BaseModel):
 
     source: IncidentSource
     fingerprint: str | None = None
+    target_agent_id: int | None = None
     rag_sources: list[str] | None = None
 
     model_config = ConfigDict(
@@ -55,6 +60,7 @@ class IncidentUpdate(BaseModel):
     message: str | None = Field(default=None, min_length=1)
     status: IncidentStatus | None = None
     severity: Severity | None = None
+    target_agent_id: int | None = Field(default=None, ge=1)
 
 
 class PaginatedIncidents(BaseModel):

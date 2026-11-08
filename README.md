@@ -27,7 +27,8 @@ run.
    - 6.4 [Retrieval-Augmented Generation](#64-retrieval-augmented-generation-rag)
    - 6.5 [Automation engine](#65-automation-engine)
    - 6.6 [Agentic investigation (LangGraph)](#66-agentic-investigation-langgraph)
-   - 6.7 [Audit trail](#67-audit-trail)
+   - 6.7 [Remote agent investigation and remediation](#67-remote-agent-investigation-and-remediation)
+   - 6.8 [Audit trail](#68-audit-trail)
 7. [Security and multi-tenancy](#7-security-and-multi-tenancy)
 8. [Observability](#8-observability)
 9. [API reference](#9-api-reference)
@@ -41,7 +42,6 @@ run.
 17. [Design decisions and trade-offs](#17-design-decisions-and-trade-offs)
 18. [Performance characteristics](#18-performance-characteristics)
 19. [Known limitations and roadmap](#19-known-limitations-and-roadmap)
-20. [License and author](#20-license-and-author)
 
 ---
 
@@ -60,12 +60,16 @@ run.
 - **Policy-controlled automation**: log, script, webhook, Slack, and custom
   actions, with validation, per-rule `continue_on_failure`, and execution logs.
 - **LangGraph investigation agent**: read-only evidence tools, a persisted state
-  machine, an explicit allowlist/blocklist, and human approval for destructive
-  actions.
+  machine, an explicit allowlist/blocklist for built-in actions, and human
+  approval for built-in destructive actions.
+- **Remote operations agent**: outbound-only polling, PostgreSQL-backed durable
+  jobs, structured action catalog, exact per-job approvals, and idempotent
+  diagnostics with non-replayed destructive remediation.
 - **Multi-tenant RBAC**: `VIEWER < RESPONDER < ADMIN`, plus superadmin tenants.
-- **Append-only audit trail** for approvals, rejections, and privileged actions.
-- **Full observability**: Prometheus metrics, OpenTelemetry traces, correlation
-  IDs, JSON logs, Grafana/Prometheus stack.
+- **Append-only audit trail** for approvals, rejections, and privileged actions,
+  plus durable job-event history for every remote transition.
+- **Observability**: Prometheus metrics, OpenTelemetry traces, correlation IDs,
+  JSON logs, Grafana/Prometheus stack.
 - **Hardened Compose stack**: health checks, restart policies, resource limits,
   graceful shutdown, and observability sidecars.
 
@@ -118,7 +122,11 @@ run.
 
 Celery beat ── every 10s ──► dispatch_outbox ──► outbox_events ──► worker
 
-Observability: API/worker ──OTLP──► OpenTelemetry Collector ──► Prometheus
+Remote agent (outbound only) ──poll/ack/result──► API ──durable jobs──► PostgreSQL
+                                      │
+                                      └──► allowlisted local action on the target host
+
+Observability: API/worker ──OTLP traces──► OpenTelemetry Collector ──► logs
                API /metrics ──────────────────────────────────► Prometheus ──► Grafana
 ```
 
@@ -130,6 +138,7 @@ Observability: API/worker ──OTLP──► OpenTelemetry Collector ──► 
 | Worker | AI analysis, automation, investigations, RAG reindex | `uv run celery -A app.celery_app.celery_app worker --loglevel=info` |
 | Beat | Periodic outbox dispatch | `uv run celery -A app.celery_app.celery_app beat --loglevel=info` |
 | Frontend | React SPA | `cd frontend && npm run dev` |
+| Remote agent | Outbound polling, allowlisted diagnostics/remediation | `cd remote-agent && python -m app.main` |
 | PostgreSQL | System of record | external or Compose |
 | Redis | Broker, result backend, counters, rate limits | external or Compose |
 | ChromaDB | Embedded persistent vector store | in-process, `app/rag/chroma_db/` |
@@ -160,8 +169,11 @@ Observability: API/worker ──OTLP──► OpenTelemetry Collector ──► 
    `automation_runs`, and `automation_status` ends `SUCCESS` or `FAILED`.
 8. If requested, the LangGraph investigation runs asynchronously, persists a
    `workflow_states` snapshot, and either pauses for approval or completes.
-9. Metrics are mirrored to Redis counters and exposed as Prometheus gauges on
-   scrape; traces and JSON logs carry correlation IDs.
+   Incidents with a target agent instead use the durable remote-job planner.
+9. Remote agents poll outbound for jobs, execute one allowlisted action, and
+   post a bounded/redacted result; result processing resumes the investigation.
+10. Metrics are mirrored to Redis counters and exposed as Prometheus gauges on
+    scrape; traces and JSON logs carry correlation IDs.
 
 ### 2.4 Investigation state machine
 
@@ -245,7 +257,7 @@ approval and therefore never execute automation from the agent path; the
 | Styling | Tailwind CSS 4 | utility-first |
 | Frontend lint | oxlint | `npm run lint` |
 | Backend lint | Ruff | `uv run ruff check` |
-| Tests | pytest `>=9.1.1` | 106 tests |
+| Tests | pytest `>=9.1.1` | 122 backend tests + 10 agent tests |
 | Containers | Docker + Compose | hardened services |
 
 ---
@@ -271,7 +283,8 @@ approval and therefore never execute automation from the agent path; the
 │   ├── api/
 │   │   ├── health.py             # GET /health
 │   │   └── routes/               # auth, incidents, automation, runbooks,
-│   │                             # tenants, outbox, audit, investigations
+│   │                             # tenants, outbox, audit, agents, remote jobs
+│   ├── remote/                   # action catalog, planner, agent auth, redaction
 │   ├── automation/
 │   │   ├── actions/              # log, script, webhook, slack
 │   │   ├── base.py               # AutomationAction ABC
@@ -319,14 +332,21 @@ approval and therefore never execute automation from the agent path; the
 │   └── versions/
 │       ├── 64aa69a79934_initial_schema.py
 │       ├── 4ff6a5f6da7a_add_runbook_version_column.py
-│       └── 6cd48e3599e7_add_workflow_state_table.py
+│       ├── 6cd48e3599e7_add_workflow_state_table.py
+│       └── 8d1c0a7b2f34_add_remote_agents_and_jobs.py
+├── remote-agent/                 # standalone outbound polling agent
+│   ├── app/                      # config, client, actions, executor, runner
+│   ├── systemd/airs-agent.service
+│   ├── tests/
+│   ├── Dockerfile
+│   └── README.md
 ├── scripts/
 │   ├── import_runbooks.py
 │   ├── seed_admin.py
 │   ├── seed_automation_rules.py
 │   ├── playground.py
 │   └── rag_eval.py
-├── tests/                        # 106 pytest tests
+├── tests/                        # 122 pytest tests
 ├── IMPLEMENTATION.md             # phase-by-phase engineering log
 ├── pyproject.toml
 ├── alembic.ini
@@ -344,13 +364,20 @@ approval and therefore never execute automation from the agent path; the
 | `tenants` | Tenant isolation boundary | `slug`, `name`, `is_active`, `webhook_secret_hash` |
 | `users` | Local accounts | `email`, `password_hash`, `role`, `is_active`, `is_superadmin`, `tenant_id` |
 | `api_tokens` | Bearer tokens | `user_id`, `token_hash` (SHA-256), `name`, `expires_at`, `last_used_at` |
-| `incidents` | Incident lifecycle | `tenant_id`, `title`, `message`, `status`, `analysis_status`, `automation_status`, `severity`, `ai_summary`, `recommendation`, `source`, `fingerprint`, `rag_sources`, `occurrence_count`, `first_seen_at`, `last_seen_at` |
+| `incidents` | Incident lifecycle | `tenant_id`, `title`, `message`, `status`, `analysis_status`, `automation_status`, `severity`, `ai_summary`, `recommendation`, `source`, `fingerprint`, `rag_sources`, `occurrence_count`, `first_seen_at`, `last_seen_at`, `target_agent_id` |
 | `outbox_events` | Durable task hand-off | `event_type`, `payload`, `idempotency_key`, `status`, `attempts`, `available_at`, `locked_at`, `published_at`, `last_error` |
 | `automation_rules` | Declarative automation | `tenant_id`, `severity`, `action_name`, `enabled`, `execution_order`, `config` |
 | `automation_runs` | Execution history | `tenant_id`, `incident_id`, `action_name`, `status`, `message`, `executed_at` |
-| `runbooks` | Editable operational docs | `tenant_id`, `name`, `content`, `version` |
+| `runbooks` | Editable operational docs | `tenant_id`, `name`, `content`, `version`, `metadata` |
 | `runbook_chunks` | pgvector index | `id`, `tenant_id`, `source`, `section`, `document`, `embedding(384)`, `chunk_hash` |
 | `workflow_states` | Persisted agent state | `incident_id`, `tenant_id`, `state_json`, `status`, `current_step`, timestamps |
+| `remote_agents` | Registered outbound targets | `tenant_id`, `agent_key`, `display_name`, `hostname`, `status`, `capabilities`, `last_seen_at` |
+| `remote_agent_credentials` | Hashed agent credentials | `agent_id`, `token_hash`, `expires_at`, `revoked_at` |
+| `remote_agent_events` | Agent audit trail | `tenant_id`, `agent_id`, `event_type`, `actor_type`, `details` |
+| `remote_jobs` | Durable remote action state | `tenant_id`, `incident_id`, `agent_id`, `action_id`, `action_parameters`, `execution_type`, `status`, `lease_id`, `expires_at` |
+| `remote_job_results` | Redacted agent output | `job_id` (unique), `status`, `stdout_redacted`, `stderr_redacted`, `structured_output`, timings |
+| `remote_job_approvals` | Exact-parameter approvals | `job_id` (unique), `action_hash`, `parameters_hash`, `approved_by`, `expires_at`, `reason` |
+| `remote_job_events` | Job audit trail | `tenant_id`, `job_id`, `event_type`, `actor_type`, `details` |
 | `audit_logs` | Append-only audit trail | `actor_*`, `action`, `resource_type`, `resource_id`, `tenant_id`, `details`, `created_at` |
 | `alembic_version` | Migration head | `version_num` |
 
@@ -366,6 +393,10 @@ approval and therefore never execute automation from the agent path; the
 | `Severity` | `UNKNOWN`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
 | `AutomationAction` | `log`, `script`, `webhook` (registry also has `slack`) |
 | `IncidentSource` | `MANUAL`, `CUSTOM`, `PROMETHEUS`, `GRAFANA`, `GITHUB` |
+| `RemoteAgentStatus` | `ACTIVE`, `DISABLED`, `REVOKED` |
+| `RemoteExecutionType` | `DIAGNOSTIC`, `REMEDIATION`, `VERIFICATION` |
+| `RemoteJobStatus` | `PENDING_APPROVAL`, `APPROVED`, `DISPATCHED`, `ACKNOWLEDGED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `CANCELLED`, `EXPIRED`, `UNKNOWN` |
+| `RemoteApprovalStatus` | `PENDING`, `APPROVED`, `REJECTED`, `EXPIRED` |
 
 ### 5.3 Relationships and invariants
 
@@ -375,12 +406,19 @@ tenants 1──* incidents 1──* automation_runs
 tenants 1──* automation_rules
 tenants 1──* runbooks 1──* runbook_chunks
 incidents 1──* workflow_states
+tenants 1──* remote_agents 1──* remote_agent_credentials
+remote_agents 1──* remote_agent_events
+incidents 1──* remote_jobs 1──1 remote_job_results
+remote_jobs 1──1 remote_job_approvals
+remote_jobs 1──* remote_job_events
 ```
 
 - Tenant-owned tables (users, incidents, automation rules/runs, runbooks,
-  runbook chunks, workflow states, audit logs) carry `tenant_id`; tenant-facing
-  queries are scoped by the caller's tenant. Superadmin-only management
-  endpoints (tenants, users, audit log, outbox) can operate globally.
+  runbook chunks, workflow states, remote agents, agent credentials/events,
+  remote jobs/results/approvals/events, audit logs) carry `tenant_id`;
+  tenant-facing queries are scoped by the caller's tenant. Superadmin-scoped
+  endpoints (tenants, audit log, outbox) can operate globally; user management
+  is tenant-scoped for tenant admins and global for superadmins.
   `outbox_events` is deliberately global infrastructure state.
 - An active incident fingerprint is unique per tenant through a partial unique
   index covering rows whose status is `OPEN` or `ACKNOWLEDGED`. Concurrent
@@ -389,6 +427,15 @@ incidents 1──* workflow_states
 - Analysis status and automation status are independent of the incident
   lifecycle (`OPEN`/`RESOLVED`/…), so a resolved incident can still retain its
   analysis result.
+- Agent credentials are stored only as SHA-256 hashes and are usable only
+  while the agent is `ACTIVE`, the credential is unexpired, and it has not been
+  revoked. Revocation is permanent; `disable` is reversible with `enable`.
+- A remote job is bound to one tenant, incident, agent, action, normalized
+  parameter set, execution type, and investigation run. Its idempotency key is
+  unique, and each job has at most one result and one approval record.
+- Approval hashes cover tenant, incident, agent, action, parameters, and risk;
+  the approval row adds the approver, expiry, and reason. Any parameter drift
+  invalidates the decision.
 - `workflow_states` is append-only per run; the API reads the latest row by
   descending `id` (not `updated_at`, which can tie within the same second).
 
@@ -408,14 +455,18 @@ Endpoints:
 
 Authentication:
 
-- `X-Webhook-Secret` is required. It is compared with `WEBHOOK_SECRET`.
+- `X-Webhook-Secret` is required. With no tenant slug it is compared with the
+  global `WEBHOOK_SECRET`.
 - If `X-Tenant-Slug` is supplied and that tenant has a
   `webhook_secret_hash`, the SHA-256 of the supplied secret is compared with the
   stored hash and the incident is created in that tenant. This enables
   per-tenant secrets.
-- If the slug is absent, unknown, or has no per-tenant hash, the global secret
-  is used and the incident lands in the default tenant. A tenant matched by a
-  per-tenant hash must be active; inactive tenants are rejected with `403`.
+- With no `X-Tenant-Slug`, the global secret targets the default tenant.
+  When a slug is supplied it is authoritative: empty or unknown slugs are
+  rejected with `401`. Tenants created through the API have a per-tenant hash
+  and must present that tenant's secret; a non-default tenant without a hash
+  is rejected with `401`. Only the legacy default tenant may be selected
+  explicitly with the global secret. Inactive tenants are rejected with `403`.
 
 Grafana normalization:
 
@@ -465,7 +516,8 @@ Operational controls:
   (superadmin).
 - `POST /api/v1/outbox/{event_id}/replay` — move a `FAILED` event back to
   `PENDING` (superadmin).
-- `GET /metrics` — `queue_wait_*` gauges expose broker wait time.
+- `GET /metrics` — queue-wait gauges are defined but broker wait time is not
+  yet recorded (see §8.1).
 
 At-least-once delivery is intentional; the worker absorbs duplicates with a
 PostgreSQL advisory lock per incident and status checks (`processing_plan`).
@@ -503,8 +555,9 @@ Providers:
 
 Fallback behavior:
 
-1. If the selected provider has no key, `get_incident_analyzer()` returns the
-   mock analyzer.
+1. If the selected provider requires a key and none is configured (Gemini, or
+   `AI_PROVIDER=openai`), `get_incident_analyzer()` returns the mock analyzer.
+   Local `ollama`/`vllm`/`lmstudio` providers can run without a key.
 2. At runtime, `FallbackAnalyzer` wraps the real provider. Any provider error
    (quota exhausted, network error, invalid model) logs a warning and returns a
    heuristic `IncidentAnalysis` with `model="fallback"`.
@@ -515,7 +568,9 @@ Abstention:
 
 - If retrieval returns no sources above `RAG_THRESHOLD`, the analyzer returns
   `abstained=True`, `severity=UNKNOWN`, `confidence=0.0`, and no LLM call is
-  made. This reduces cost and prevents hallucinated remediations.
+  made. This reduces cost and prevents hallucinated remediations. If the
+  incident already has a known severity from its alert source, the abstained
+  analysis preserves it rather than overwriting it with `UNKNOWN`.
 - `sources` (runbook chunk IDs) are persisted on the incident for
   explainability.
 
@@ -614,7 +669,9 @@ Engine semantics:
 
 - Rules are ordered by `execution_order`.
 - Unknown actions are skipped with a warning.
-- Invalid rule config is skipped (`TypeError`).
+- Action constructors that reject unexpected config keys with `TypeError` are
+  skipped; other constructor errors surface at runtime, so rule creation
+  validates the common config shapes first.
 - Default is **fail-fast**: an action exception rolls back the poisoned
   transaction, persists `automation_status=FAILED`, and re-raises.
 - Per-rule `config.continue_on_failure=true` continues with remaining rules.
@@ -641,6 +698,8 @@ Agent-specific policy (separate from the general engine):
 - **Allowlist:** `log` = safe, `webhook` = destructive (requires approval).
 - **Blocklist:** `script` and `slack` are never executed by the investigation
   agent; they require manual execution outside the agent.
+- These lists cover built-in action names. Custom actions are trusted code and
+  are not filtered by this policy (see §7.6).
 
 ### 6.6 Agentic investigation (LangGraph)
 
@@ -694,8 +753,12 @@ Execution and verification:
 
 Outcome:
 
-- `workflow_status` (`pending|in_progress|waiting_for_approval|completed|failed`),
+- `workflow_status`
+  (`pending|in_progress|waiting_for_agent|waiting_for_approval|completed|failed`),
   `error`, `current_step`, `steps_completed`.
+- Remote fields: `mode`, `target_agent_id`, `investigation_round`,
+  `pending_job_ids`, `evidence`, `planner_reasoning`, `remote_action`,
+  `remote_action_hash`, `baseline_metrics`.
 
 #### Nodes
 
@@ -708,7 +771,7 @@ Outcome:
 | `create_remediation_plan` | Builds a human-readable plan and risk classification |
 | `risk_assessment` | HIGH/CRITICAL → destructive + approval required |
 | `wait_for_approval` | Pauses; the API resumes later |
-| `execute_approved_action` | Runs only allow-listed automation after explicit approval |
+| `execute_approved_action` | Runs built-in allow-listed automation after explicit approval |
 | `verify_service_health` | Calls the health check and records the result |
 | `update_incident` | Marks the workflow complete |
 
@@ -724,8 +787,9 @@ planning even if evidence is still insufficient. This prevents an infinite
 - Approving dispatches `run_investigation` with `resume=True`. It executes the
   short approval graph (`execute_approved_action → verify_service_health →
   update_incident`) and deliberately does **not** re-run analysis or re-plan;
-  the plan the human approved is the plan that is acted on. Only allow-listed
-  actions can run.
+  the plan the human approved is the plan that is acted on. For built-in
+  actions, only `log` and `webhook` can run; custom actions are trusted code
+  and are not filtered by this policy.
 - `execute_approved_action` is defensive: it refuses to execute unless both
   `requires_approval` and `approved is True`. Lower-severity runs are therefore
   plan-only (shadow mode) even though they pass through the same node.
@@ -757,7 +821,115 @@ Guardrails:
   prompt-injection risk.
 - Tool outputs are schema-validated before entering the graph.
 
-### 6.7 Audit trail
+### 6.7 Remote agent investigation and remediation
+
+Remote incidents use the same persisted `InvestigationState`, but replace the
+local tool nodes with a durable job layer. An incident is remote when it has a
+`target_agent_id`; otherwise the LangGraph path is unchanged.
+
+#### Target selection
+
+- Admin-created agents have a tenant-scoped `agent_key`, `hostname`, and
+  `display_name`.
+- Grafana alerts can set `labels.agent_id` or `labels.agent`; otherwise the
+  adapter falls back to `labels.instance` (including `host:port` by stripping
+  the port). Generic webhooks use `target_agent_ref`.
+- Resolution only matches `ACTIVE` agents in the alert's tenant. Unknown or
+  inactive targets leave the incident local and visible for manual triage.
+
+#### Job lifecycle
+
+```text
+PENDING_APPROVAL ──approve──► APPROVED ──poll──► DISPATCHED ──ack──► ACKNOWLEDGED
+       │                         │                    │
+       └──reject──► CANCELLED    └──expiry──► EXPIRED  ├──result──► SUCCEEDED
+                                                       ├──result──► FAILED / TIMED_OUT
+                                                       └──lease lost──► APPROVED (diagnostic)
+                                                                       UNKNOWN (destructive)
+```
+
+- `remote_jobs`, `remote_job_results`, `remote_job_approvals`, and
+  `remote_job_events` live in PostgreSQL and are the source of truth. Celery
+  messages are only wake-ups; a broker outage cannot erase a pending job.
+- Polling leases one job atomically. The agent acknowledges before executing.
+- The agent-facing poll/ack response is a minimal job contract; it does not
+  expose tenant identity, idempotency keys, approval records, approver, or
+  operator identity.
+- Delivery is **at-least-once**. The server stores one result per job (unique
+  `job_id`) and returns that same result for duplicate posts. The agent also
+  keeps a local SQLite execution record so a result POST failure can be retried.
+- Diagnostic leases can be retried after expiry. A destructive job that was
+  acknowledged and then lost is marked `UNKNOWN`, never replayed automatically.
+- Every transition appends a `remote_job_events` row.
+- The 30-second `recover_remote_jobs` task also resumes any terminal job whose
+  result was never applied (lost broker wake-up, expired approval, lost lease),
+  so an investigation cannot remain `waiting_for_agent` forever. A destructive
+  job lost after acknowledgement ends the run as failed/`UNKNOWN` for manual
+  reconciliation.
+- Starting a new investigation cancels jobs that have not been leased and
+  refuses to restart while a destructive job is approved or in flight, so an
+  old approval cannot be reused by a new run. The restart, approval, and
+  result-processing paths use a consistent PostgreSQL row-lock order (latest
+  `workflow_states` row, then the job row).
+
+#### Action registry and safety
+
+The server catalog in `app/remote/actions.py` is authoritative. An LLM may only
+choose an action ID and validated parameters; it never supplies shell text.
+The v1 catalog contains:
+
+| Action | Type | Risk | Approval |
+|---|---|---|---|
+| `inspect_memory`, `inspect_cpu_usage`, `inspect_disk_usage` | diagnostic | safe | no |
+| `list_memory_processes`, `list_cpu_processes`, `inspect_process` | diagnostic | safe | no |
+| `inspect_service_status`, `inspect_service_logs` | diagnostic | safe | no |
+| `restart_service` | remediation | destructive | per-job |
+| `terminate_process` | remediation | destructive | per-job |
+
+The agent independently enforces:
+
+- fixed argv commands, no shell;
+- service names must be in `AIRS_ALLOWED_SERVICES` (`nginx` and
+  `nginx.service` are both accepted);
+- disk paths must be under `AIRS_ALLOWED_DISK_ROOTS`;
+- remediation is disabled unless `AIRS_ENABLE_REMEDIATION=true`;
+- `terminate_process` revalidates PID start time, owner, and command and refuses
+  PID 1, the agent itself, root-owned processes, and critical process names;
+- output is redacted and size-bounded locally, then sanitized again on the
+  server (stdout, stderr, error text, and nested structured output).
+
+#### Approval binding
+
+A remediation job creates a `RemoteJobApproval` bound by SHA-256 to tenant,
+incident, agent, action ID, normalized parameters, and risk level. Approval:
+
+- requires `RESPONDER+` in the job's tenant;
+- requires the job to still be `PENDING_APPROVAL`;
+- checks the stored hash against the current job, and optionally against an
+  `action_hash` sent by the UI;
+- enforces the approval expiry;
+- verifies the latest investigation run still matches the job's `run_id`;
+- records approver, email, timestamp, and reason.
+
+The incident-level approval endpoint intentionally rejects remote
+investigations; use `POST /api/v1/remote-jobs/{job_id}/approve` or
+`/reject`. After approval the agent polls the job, executes it, returns a
+result, and the investigation queues a distinct `VERIFICATION` job that reuses
+diagnostic probes. Verification passes only when the returned evidence meets
+the configured memory threshold/drop (and service-active check when a target
+service is known).
+
+#### Remote agent
+
+`remote-agent/` is a standalone Python daemon with `httpx` as its only runtime
+dependency. It heartbeats capabilities, polls, acknowledges, executes, stores
+the result locally, and posts it with retry. Run it as a constrained host
+service or on a disposable lab VM; see `remote-agent/README.md` and
+`remote-agent/systemd/airs-agent.service`. It is not a sandbox: use the smallest
+host privilege set that can perform the approved actions, keep the shown-once
+token secret, and use TLS outside a local lab.
+
+### 6.8 Audit trail
 
 `audit_logs` is append-only at the application layer (there are no update or
 delete endpoints). Each row records:
@@ -787,7 +959,7 @@ entries through the API in this version.
 
 | Mode | Trigger | Resulting principal |
 |---|---|---|
-| Open demo | `AUTH_REQUIRED=false`, `API_KEY` empty | Anonymous `ADMIN` in the default tenant |
+| Open demo | `AUTH_REQUIRED=false`, `API_KEY` empty | Anonymous `ADMIN` + superadmin in the default tenant |
 | Legacy API key | `X-API-Key` matches `API_KEY` | `ADMIN`, superadmin |
 | Bearer token | `Authorization: Bearer <token>` | Token owner's role/tenant |
 | Protected | `AUTH_REQUIRED=true` and no valid credential | `401` |
@@ -797,7 +969,9 @@ Details:
 - Passwords: PBKDF2-HMAC-SHA256, 260 000 iterations, random 16-byte salt.
 - API tokens: random URL-safe value shown once; only the SHA-256 hash is
   stored; optional expiry; `last_used_at` is updated on use.
-- Token revocation and listing are self-service (`/auth/tokens`).
+- Token listing is self-service. Token revocation is self-service for
+  non-admins; a tenant `ADMIN` can revoke any token belonging to a user in
+  their tenant, and a superadmin can revoke any token.
 - `ALLOW_PUBLIC_REGISTRATION=false` disables self-registration; bootstrap the
   first admin with `scripts.seed_admin.py`.
 
@@ -811,6 +985,9 @@ Roles are hierarchical (`VIEWER < RESPONDER < ADMIN`).
 | Create/update/delete incidents | — | ✅ | ✅ | ✅ |
 | Send webhook test (`/webhooks/test`) | — | ✅ | ✅ | ✅ |
 | Approve/reject investigations | — | ✅ | ✅ | ✅ |
+| Approve/reject remote jobs | — | ✅ | ✅ | ✅ |
+| Read remote agents/jobs | ✅ | ✅ | ✅ | ✅ |
+| Create/rotate/enable/disable/revoke remote agents | — | — | ✅ (own tenant) | ✅ |
 | Write automation rules | — | — | ✅ | ✅ |
 | Write/delete/reindex runbooks | — | — | ✅ | ✅ |
 | User management | — | — | ✅ (own tenant) | ✅ |
@@ -832,23 +1009,31 @@ Additional checks:
 - Vector retrieval passes `where={"tenant_id": …}`.
 - The investigation API validates `workflow_states.tenant_id` against the
   principal before returning or approving.
-- Webhook ingestion resolves the target tenant from `X-Tenant-Slug` or the
-  default tenant.
+- Remote agents, jobs, results, and approvals are tenant-scoped. An agent token
+  resolves to exactly one agent/tenant, and poll/ack/result queries include both
+  IDs. A tenant admin cannot see or rotate another tenant's agent.
+- The remote job approval endpoint re-reads the job and investigation state
+  under the caller's tenant before deciding.
+- Webhook ingestion rejects empty or unknown `X-Tenant-Slug` values and uses
+  the default tenant only when the slug is omitted; a per-tenant secret scopes
+  the incident to the matching tenant.
 
 ### 7.4 Webhook security
 
 - `X-Webhook-Secret` is mandatory for public adapters.
 - Per-tenant secrets are stored as SHA-256 hashes and compared in constant time
-  (`hmac.compare_digest`). A matching per-tenant secret scopes the resulting
-  incidents to that tenant; otherwise the global secret routes to the default
-  tenant.
+  (`hmac.compare_digest`). A supplied tenant slug must resolve; a tenant with a
+  hash must present its own secret, while only the legacy default tenant may
+  use the global secret with an explicit slug. With no slug, the global secret
+  routes to the default tenant. Invalid slugs/secrets return `401`; inactive
+  tenants return `403`.
 - The browser tester uses the authenticated `/webhooks/test` endpoint, so the
   secret is never shipped to the client bundle.
 
 ### 7.5 Abuse controls
 
-- Per-IP, per-path sliding-window rate limit on writes (`RATE_LIMIT_PER_MIN`,
-  default 60/min). Login is stricter at 10/min.
+- Fixed 60-second window rate limit keyed by client IP + request path
+  (`RATE_LIMIT_PER_MIN`, default 60/min). Login is stricter at 10/min.
 - Redis failure **fails open** so a metrics outage cannot block incident
   ingestion.
 - CORS allows `FRONTEND_URL` plus comma-separated `CORS_ORIGINS`.
@@ -857,9 +1042,21 @@ Additional checks:
 
 - Agent allowlist: `log` safe, `webhook` destructive/approval-gated.
 - Agent blocklist: `script`, `slack` are never executed by the agent.
+- The allowlist/blocklist covers built-in action names. Custom actions
+  registered in `app/automation/registry.py` are trusted code; review them
+  before enabling matching rules in an environment where the agent can execute
+  automation.
 - Script automation rejects shell metacharacters and runs `subprocess.run([path])`
   without a shell.
 - Destructive actions require a fresh human approval in the current run.
+- Remote remediation is separate from severity-based automation: an LLM can
+  only propose a catalog action, the server validates exact parameters, and a
+  per-job `RESPONDER+` approval is bound to the tenant, incident, agent,
+  action, parameters, risk level, expiry, and approver. The agent also requires
+  a local remediation opt-in and validates service/PID allowlists.
+- Remote agents authenticate with hashed, expiring credentials whose token is
+  shown once at creation/rotation and reused until rotated/expired/revoked.
+  can only call the agent-facing heartbeat/poll/ack/result endpoints.
 
 ---
 
@@ -877,20 +1074,20 @@ avoids double-counting when Celery retries. The trade-off is documented in
 | `incidents_created_total` | `severity` | Incidents created |
 | `incidents_completed_total` | `severity` | Incidents that completed processing |
 | `incidents_failed_total` | `severity` | Failed incidents |
-| `incident_resolution_total_seconds` | `severity` | Cumulative resolution time |
-| `incident_resolution_average_seconds` | `severity` | Average resolution time |
+| `incident_resolution_total_seconds` | `severity` | Cumulative resolution time (reserved) |
+| `incident_resolution_average_seconds` | `severity` | Reserved; exporter currently mirrors the total, not an average |
 | `ai_requests_total` | — | AI analysis requests |
 | `ai_failures_total` | — | AI analysis failures |
 | `analysis_count_total` | — | Completed analyses |
 | `analysis_total_seconds` | — | Cumulative analysis time |
 | `analysis_average_seconds` | — | Average analysis time |
 | `llm_tokens_total` | `model`, `type` (`input`/`output`) | Token usage |
-| `llm_request_latency_seconds` | `model` | LLM latency |
-| `retrieval_requests_total` | `backend` | RAG retrievals |
-| `retrieval_failures_total` | `backend` | RAG failures |
-| `retrieval_latency_seconds` | `backend` | RAG latency |
-| `queue_wait_total_seconds` | `queue` | Cumulative Celery wait |
-| `queue_wait_average_seconds` | `queue` | Average Celery wait |
+| `llm_request_latency_seconds` | `model` | Cumulative LLM latency (reserved) |
+| `retrieval_requests_total` | `backend` | RAG retrievals (reserved) |
+| `retrieval_failures_total` | `backend` | RAG failures (reserved) |
+| `retrieval_latency_seconds` | `backend` | Cumulative RAG latency (reserved) |
+| `queue_wait_total_seconds` | `queue` | Cumulative Celery wait (reserved) |
+| `queue_wait_average_seconds` | `all` | Average of per-queue totals (reserved) |
 | `automation_runs_total` | `action` | Automation executions |
 | `automation_failures_total` | `action` | Failed automation executions |
 | `automation_total_seconds` | — | Cumulative automation time |
@@ -899,6 +1096,11 @@ avoids double-counting when Celery retries. The trade-off is documented in
 | `webhook_failure_total` | — | Failed automation webhook sends |
 | `webhook_requests_total` | `source` | Inbound webhook receptions |
 | `webhook_failures_total` | `source` | Failed inbound webhooks |
+
+Instrumentation note: incident, analysis, automation, and webhook series are
+incremented by application code. The resolution-time, LLM, RAG-retrieval, and
+queue-wait series are currently exposed as reserved gauges and remain zero
+until their call sites are wired.
 
 Scrape endpoint: `GET /metrics` (Prometheus text exposition format).
 
@@ -968,14 +1170,18 @@ All protected routes honour the optional-auth rules described in §7.
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | POST | `/auth/login` | public | Exchange email/password for a bearer token |
-| POST | `/auth/register` | public (if enabled) | Self-registration; first user becomes ADMIN |
+| POST | `/auth/register` | public (if enabled) | Self-registration; first user becomes ADMIN + superadmin |
 | GET | `/auth/me` | any | Current principal |
-| POST | `/auth/tokens` | VIEWER+ | Issue an API token for the current user |
-| GET | `/auth/tokens` | VIEWER+ | List own tokens |
-| DELETE | `/auth/tokens/{token_id}` | VIEWER+ | Revoke a token |
+| POST | `/auth/tokens` | VIEWER+ (user principal) | Issue an API token for the current user |
+| GET | `/auth/tokens` | VIEWER+ (user principal) | List own tokens |
+| DELETE | `/auth/tokens/{token_id}` | VIEWER+ (user principal) | Revoke own token; tenant admins can revoke tenant tokens; superadmins any |
 | GET | `/auth/users` | ADMIN | List users (tenant-scoped unless superadmin) |
 | POST | `/auth/users` | ADMIN | Create a user |
 | PATCH | `/auth/users/{user_id}` | ADMIN | Update role/active/password |
+
+The anonymous demo principal has no user row, so `/auth/tokens` listing returns
+an empty list and token creation returns `400`. Log in or bootstrap an admin
+with `scripts.seed_admin.py` to issue tokens.
 
 ### 9.2 Incidents
 
@@ -1033,7 +1239,7 @@ All protected routes honour the optional-auth rules described in §7.
 |---|---|---|---|
 | GET | `/tenants/me` | any | Caller's tenant |
 | GET | `/tenants/` | superadmin | List tenants |
-| POST | `/tenants/` | superadmin | Create tenant; returns the one-time webhook secret |
+| POST | `/tenants/` | superadmin | Create tenant; returns the webhook secret shown once |
 | PATCH | `/tenants/{id}` | superadmin | Update name/active |
 
 ### 9.8 Outbox
@@ -1058,7 +1264,40 @@ All protected routes honour the optional-auth rules described in §7.
 | GET | `/metrics` | public | Prometheus exposition |
 | GET | `/` | public | Project name/version |
 
-### 9.11 Example requests
+### 9.11 Remote agents and jobs
+
+Admin agent management:
+
+| Method | Path | Role | Purpose |
+|---|---|---|---|
+| POST | `/agents` | ADMIN | Register an agent; returns the token shown once |
+| GET | `/agents` | VIEWER+ | List tenant agents (`include_revoked`) |
+| GET | `/agents/{id}` | VIEWER+ | Agent details |
+| PATCH | `/agents/{id}` | ADMIN | Update display name/hostname/capabilities |
+| POST | `/agents/{id}/disable` | ADMIN | Disable polling/execution (re-enable with `enable`) |
+| POST | `/agents/{id}/enable` | ADMIN | Re-enable a disabled agent |
+| POST | `/agents/{id}/revoke` | ADMIN | Revoke agent and all credentials permanently |
+| POST | `/agents/{id}/rotate-credential` | ADMIN | Revoke previous tokens and issue one new token |
+
+Agent-facing API (agent credential only; not a user bearer token):
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/agent/heartbeat` | Report version/hostname/capabilities; updates last seen |
+| POST | `/agent/jobs/poll` | Atomically lease one approved job |
+| POST | `/agent/jobs/{id}/ack` | Acknowledge the lease before execution |
+| POST | `/agent/jobs/{id}/result` | Submit bounded/redacted result (duplicate-safe) |
+
+Tenant-scoped inspection and approval:
+
+| Method | Path | Role | Purpose |
+|---|---|---|---|
+| GET | `/remote-jobs?incident_id=&status=&limit=&offset=` | VIEWER+ | List jobs |
+| GET | `/remote-jobs/{id}` | VIEWER+ | Job, result, and approval record |
+| POST | `/remote-jobs/{id}/approve` | RESPONDER+ | Approve exact job (optional `action_hash`) |
+| POST | `/remote-jobs/{id}/reject` | RESPONDER+ | Reject exact job |
+
+### 9.12 Example requests
 
 ```bash
 # Login
@@ -1088,6 +1327,18 @@ curl -X POST http://localhost:8000/api/v1/investigations/1/approve \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"approved":true,"reason":"Reviewed runbook steps"}'
+
+# Register a remote agent (ADMIN). Save the returned token once.
+curl -X POST http://localhost:8000/api/v1/agents \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"display_name":"lab-target-1","hostname":"lab-target-1","agent_key":"lab-target-1"}'
+
+# Approve one exact remote action (RESPONDER+)
+curl -X POST http://localhost:8000/api/v1/remote-jobs/7/approve \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"approved":true,"reason":"lab change window","action_hash":"<hash from the job>"}'
 ```
 
 ---
@@ -1103,8 +1354,9 @@ React 19 + TypeScript + Vite SPA, styled with Tailwind CSS 4.
 | `/` | Dashboard | Stats, filters, recent incidents, health |
 | `/incidents` | Incidents | Search/filter, create, delete |
 | `/incidents/:id` | Incident detail | Edit, automation runs, audit timeline, investigation link |
-| `/incidents/:id/investigation` | Investigation | Status, risk, evidence, plan, steps, start/approve, 3 s polling |
-| `/approvals` | Approvals | Real `waiting_for_approval` queue + start-investigation shortcuts |
+| `/incidents/:id/investigation` | Investigation | Status, risk, evidence, plan, remote job timeline, per-job approval, 3 s polling |
+| `/approvals` | Approvals | Local approval queue, pending remote actions, start-investigation shortcuts |
+| `/agents` | Remote agents | Register agents, show online/offline, rotate/enable/disable/revoke, token shown once |
 | `/rules` | Automation rules | CRUD, action registry, JSON config editor |
 | `/runbooks` | Runbooks | Create/edit/delete, async reindex |
 | `/webhooks` | Webhook tester | Grafana/custom drill without exposing secrets |
@@ -1120,9 +1372,14 @@ React 19 + TypeScript + Vite SPA, styled with Tailwind CSS 4.
   - bearer token injection from `localStorage`
   - consistent error extraction (`detail` string or validation array)
 - TanStack Query handles caching, invalidation, and polling.
-- `useInvestigation` polls every 3 s while status is `in_progress` or
-  `waiting_for_approval`.
+- `useInvestigation` polls every 3 s while status is `in_progress`,
+  `waiting_for_agent`, or `waiting_for_approval`.
 - `usePendingApprovals` polls every 5 s.
+- `useRemoteJobs` polls every 3 s while any job is pending/dispatched, and
+  `usePendingRemoteJobs` polls the cross-incident remote approval queue every
+  5 s.
+- `src/api/remote.ts` owns agent provisioning, rotation, status changes, remote
+  job listing, and per-job approve/reject mutations.
 
 ### 10.3 Frontend commands
 
@@ -1170,6 +1427,13 @@ Settings are loaded from environment variables and `.env` via
 | `DEFAULT_TENANT_SLUG` | `default` | no | Bootstrap tenant slug |
 | `DEFAULT_TENANT_NAME` | `Default` | no | Bootstrap tenant name |
 | `RATE_LIMIT_PER_MIN` | `60` | no | POST writes per IP per minute (0 disables) |
+| `REMOTE_AGENT_TOKEN_TTL_DAYS` | `90` | no | Agent credential lifetime |
+| `REMOTE_JOB_DEFAULT_TTL_SECONDS` | `900` | no | Default job/approval expiry |
+| `REMOTE_MAX_INVESTIGATION_ROUNDS` | `3` | no | Maximum diagnostic planning rounds |
+| `REMOTE_MAX_ACTIONS_PER_ROUND` | `3` | no | Cap per planner round |
+| `REMOTE_MAX_TOTAL_ACTIONS` | `10` | no | Total action budget per run |
+| `REMOTE_VERIFICATION_MEMORY_PERCENT` | `80` | no | Pass threshold for post-remediation memory |
+| `REMOTE_VERIFICATION_MEMORY_DROP` | `10` | no | Alternative pass: memory dropped by this percent |
 | `FRONTEND_URL` | `http://localhost:5173` | no | Primary CORS origin |
 | `CORS_ORIGINS` | `""` | no | Extra comma-separated origins |
 | `LOG_JSON` | `false` | no | JSON log lines |
@@ -1190,7 +1454,7 @@ APP_NAME=AI Incident Response System
 DEBUG=True
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/airs
 REDIS_URL=redis://localhost:6379/0
-WEBHOOK_SECRET=change-me
+WEBHOOK_SECRET=super-secret-key
 GEMINI_API_KEY=
 AI_PROVIDER=gemini
 AI_MODEL=gemini-2.5-flash
@@ -1257,6 +1521,14 @@ uv run celery -A app.celery_app.celery_app beat --loglevel=info
 
 # Terminal 4 — frontend
 cd frontend && npm run dev
+
+# Terminal 5 — optional remote agent (after registering it and copying its token)
+cd remote-agent
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env           # set AIRS_BASE_URL + AIRS_AGENT_TOKEN
+set -a; . ./.env; set +a
+.venv/bin/python -m app.main
 ```
 
 Open:
@@ -1284,6 +1556,19 @@ If `AUTH_REQUIRED=true`, add
 `-H "Authorization: Bearer <token>"` (or `-H "X-API-Key: <API_KEY>"`) to the
 incident and outbox calls. The example `.env` leaves auth disabled for the demo.
 
+Remote demo flow:
+
+1. Open **Agents** (or `POST /api/v1/agents` as ADMIN) and create an agent whose
+   `agent_key`/`hostname` is `lab-target-1`.
+2. Start the agent from `remote-agent/` with the returned token.
+3. Send a Grafana alert with `labels.agent_id=lab-target-1` (or `instance`).
+4. Start the investigation. The page shows diagnostic jobs and polls while the
+   agent works.
+5. When a destructive action is proposed, approve or reject that exact job from
+   the investigation page or **Approvals**. With
+   `AIRS_ENABLE_REMEDIATION=false` the agent refuses destructive actions and
+   reports a clear failure instead of executing them.
+
 ### 12.5 Useful scripts
 
 | Script | Command | Purpose |
@@ -1309,8 +1594,15 @@ The base Compose file uses `${GEMINI_API_KEY:-dummy}` so no real secret is
 baked into the image. Analysis therefore falls back to the heuristic analyzer
 unless you export `GEMINI_API_KEY` (or set `AI_PROVIDER=openai` and the matching
 OpenAI-compatible variables) before `docker compose up`. Compose reads
-`docker/.env` when it is started from the `docker/` directory; a shell export
-works in either location.
+`docker/.env`; create it with only the Compose overrides you need (for example
+`GEMINI_API_KEY`, `AI_PROVIDER`, or `WEBHOOK_SECRET`). The same `docker/.env`
+is used when invoking Compose from the repository root with
+`-f docker/docker-compose.yml`, because the Compose project directory is
+`docker/`. Do not copy the root development `.env` verbatim: its
+`DATABASE_URL`, `REDIS_URL`, and `FRONTEND_URL` targets are for the host, while
+Compose supplies in-cluster values and defaults `FRONTEND_URL` to
+`http://localhost:3000`. A shell export works in either location; use
+`--env-file` only if you keep overrides in a different file.
 
 ### 13.1 Services
 
@@ -1323,6 +1615,7 @@ works in either location.
 | `worker` | same image | — | Celery worker; persists Chroma in `chroma_data` |
 | `beat` | same image | — | Outbox poller |
 | `frontend` | `frontend/Dockerfile` | `3000` → nginx 80 | Production build |
+| `agent` | `remote-agent/Dockerfile` | — | Optional `remote-demo` profile; diagnostics-only, polls outbound |
 | `otel-collector` | `otel/opentelemetry-collector-contrib:0.108.0` | `4317`, `4318` | OTLP receiver; metrics on `9464`; traces logged |
 | `prometheus` | `prom/prometheus:v2.53.0` | `9090` | Scrapes API + collector |
 | `grafana` | `grafana/grafana:11.0.0` | `3001` → 3000 | admin/admin default |
@@ -1337,9 +1630,11 @@ Hardening:
   `service_completed_successfully`.
 - JSON logs and OTLP tracing enabled for API and worker; beat shares the same
   environment and tracing setup.
-- The API image installs the CPU-only PyTorch wheel after syncing locked
-  dependencies, avoiding the default PyPI torch/CUDA bundle and reducing image
-  size.
+- The API image syncs the locked dependency graph (which includes the CUDA
+  PyTorch packages), then replaces `torch` with the CPU-only wheel in the same
+  image layer. The final image omits the CUDA runtime, but a clean build still
+  downloads the CUDA wheel set and needs roughly 25–30 GB of free Docker disk
+  (30–40 GB is comfortable) before the layer is committed.
 
 ### 13.2 Migrations and optional seed data
 
@@ -1377,6 +1672,22 @@ For `RAG_BACKEND=pgvector`, run the ingest against the API/database instead
 (`docker compose run --rm api python -m app.rag.ingest --backend pgvector`);
 the pgvector table lives in PostgreSQL.
 
+Optional Compose demo agent:
+
+```bash
+# 1. Register an agent in the UI/API and copy its token (shown once).
+# 2. Export the token for Compose.
+export AIRS_AGENT_TOKEN='...'
+# 3. Start only the optional diagnostics-only agent profile.
+docker compose --profile remote-demo up -d agent
+docker compose logs -f agent
+```
+
+This agent inspects its own container (memory, processes, disk, load) and is
+honest about its limits: there is no systemd inside the container, so
+`restart_service` is not available. Use a disposable Linux VM with the systemd
+unit for remediation demos.
+
 ### 13.3 Port conflicts
 
 If local PostgreSQL/Redis already bind `5432`/`6379`, Compose will fail to
@@ -1404,6 +1715,20 @@ docker compose -f docker/docker-compose.yml config --services
 - If you scale to multiple worker replicas, use `pgvector` instead of sharing
   one embedded Chroma volume across replicas.
 
+### 13.6 Named volumes and data retention
+
+Compose declares `pgdata`, `chroma_data`, `hf_cache`, and `agent_state` as
+named volumes and creates them automatically on the first `docker compose up`.
+With the default project name (`docker` for this Compose project), Docker names
+them `docker_pgdata`, `docker_chroma_data`, `docker_hf_cache`, and
+`docker_agent_state`. If you set `COMPOSE_PROJECT_NAME`, that prefix changes. Do
+not pre-create volumes with different names expecting Compose to reuse them.
+
+`docker compose down` keeps the volumes. `docker compose down -v` deletes
+PostgreSQL data, the embedded Chroma index, the Hugging Face model cache, and
+the optional agent's local execution store. Back up PostgreSQL before using
+`-v` outside a disposable demo environment.
+
 ---
 
 ## 14. Database migrations
@@ -1418,6 +1743,9 @@ The migration chain is:
       │
       ▼
 6cd48e3599e7 (workflow_states table)
+      │
+      ▼
+8d1c0a7b2f34 (remote agents, credentials, jobs, results, approvals)
 ```
 
 Common commands:
@@ -1450,13 +1778,16 @@ Important implementation details:
 ```bash
 uv run pytest -q
 uv run ruff check app tests migrations scripts
+uv run ruff check remote-agent/app remote-agent/tests
 cd frontend && npm run build && npm run lint
+cd remote-agent && uv run --no-project --with pytest --with httpx python -m pytest -q
 ```
 
 Latest local result:
 
 ```text
-106 passed, 2 warnings
+122 passed, 2 warnings
+remote-agent: 10 passed
 ruff: All checks passed!
 frontend: build + oxlint clean
 ```
@@ -1481,7 +1812,10 @@ frontend: build + oxlint clean
 | `test_hardening.py` | Retry/timeout/reliability knobs |
 | `test_metrics_resilience.py` | Metrics survive Redis outages |
 | `test_investigation.py` | Graph compilation, persistence, start/approve, tenant scoping, loop guard |
+| `test_agent_tools.py` | Tenant-scoped runbook search and tool input bounds |
 | `test_ai_provider.py`, `test_ai_user_choice.py`, `test_ai_fallback.py` | Provider selection and fallback |
+| `test_remote_agents.py` | Agent credentials/revocation, tenant isolation, job lease/ack/duplicate result, exact approval binding, remote e2e, destructive lease recovery |
+| `remote-agent/tests/test_actions.py` | Agent allowlists, remediation opt-in, idempotent execution, crash-safe destructive refusal, redaction/caps |
 
 ### 15.3 RAG evaluation
 
@@ -1508,7 +1842,8 @@ accuracy 1.0**.
 | Analysis stuck `PENDING` | Beat/worker down, broker down, event not dispatched | Check `outbox_events`; start beat/worker; replay failed events |
 | Outbox event `FAILED` | 10 publish attempts exhausted | `GET /outbox/?status=FAILED`, then `POST /outbox/{id}/replay` |
 | Gemini `429 RESOURCE_EXHAUSTED` | Free-tier daily quota | Automatic heuristic fallback; or set `AI_PROVIDER=mock` / use a new key |
-| Analysis `FAILED` with quota/network error | Provider unavailable | Verify fallback is active (`model="fallback"`), inspect worker logs |
+| Analysis completed with `model="fallback"` | Provider quota/network/auth failure | Expected degradation; fix the provider key/endpoint or set `AI_PROVIDER=mock` |
+| Analysis `FAILED` | Non-provider exception (DB/schema/task bug), or the fallback itself failed | Inspect worker logs for the exception; the task retries a bounded number of times |
 | `retrieve_runbooks failed: String should have at most 500 characters` | Alert payload longer than tool limit | Fixed by clipping the query to 500 chars |
 | Investigation stuck `in_progress` | Worker died mid-run, or old state | Restart worker; start the investigation again; inspect `workflow_states` |
 | No pending approvals | No investigation is `waiting_for_approval` | Start an investigation on a HIGH/CRITICAL incident |
@@ -1518,6 +1853,11 @@ accuracy 1.0**.
 | CORS error in browser | Origin not in `FRONTEND_URL`/`CORS_ORIGINS` | Match the browser origin exactly (scheme/host/port) |
 | Ports 5432/6379 already in use | Local PostgreSQL/Redis running | Stop them or remap Compose ports |
 | Chroma results stale after runbook edit | Index not rebuilt | `POST /runbooks/reindex` or run ingest |
+| Agent never appears online | Wrong `AIRS_BASE_URL`, token revoked/expired, or agent cannot reach the API | Check `journalctl -u airs-agent`; test `/api/v1/agent/heartbeat`; rotate the credential |
+| Investigation stays `waiting_for_agent` | Agent offline, heartbeat not active, or jobs not polled | Check **Agents** last-seen; ensure worker/beat and agent are running |
+| Remote approval returns 409 | Job changed, expired, already decided, or belongs to a superseded run | Refresh the investigation; create a fresh run if needed |
+| Remote remediation reports FAILED immediately | Agent has `AIRS_ENABLE_REMEDIATION=false`, service not allowlisted, or PID revalidation failed | Set the opt-in only on a lab host; update `AIRS_ALLOWED_SERVICES`; re-investigate |
+| Destructive job becomes `UNKNOWN` | Agent acknowledged then lost its lease/crashed | Reconcile the host manually; AIRS will not replay destructive work automatically |
 
 ### 16.2 Celery operations
 
@@ -1542,8 +1882,9 @@ Rules:
   same tasks. Avoid leaving an old worker fleet running alongside a new one.
 - `task_acks_late=True` plus `worker_prefetch_multiplier=1` trades throughput
   for at-least-once safety.
-- Hard time limit: 300 s; soft time limit: 270 s; up to 5 retries with
-  exponential backoff and jitter for transient errors.
+- Hard time limit: 300 s; soft time limit: 270 s; up to 5 retries. Celery
+  autoretry handles the configured transient exceptions with exponential
+  backoff and jitter; generic analysis failures use a fixed 30 s countdown.
 
 ### 16.3 Stale investigation state cleanup
 
@@ -1562,8 +1903,9 @@ JOIN (
 ORDER BY w.incident_id;
 ```
 
-Then start the investigation again from the UI/API; the start endpoint resets
-approval, execution, evidence, and plan fields and dispatches a fresh run.
+Once the 10-minute stale window has passed, start the investigation again from
+the UI/API; the start endpoint resets approval, execution, evidence, and plan
+fields and dispatches a fresh run.
 
 ### 16.4 Rebuilding the vector index
 
@@ -1631,15 +1973,16 @@ gauges are snapshots, not monotonic counters; rate calculations should use
 
 ### 17.4 Shadow-mode agent
 
-The agent never executes `script` or `slack`, and `webhook` requires approval.
-This keeps the blast radius small while still demonstrating autonomous
-investigation and policy enforcement.
+For the built-in actions, the agent never executes `script` or `slack`, and
+`webhook` requires approval. Custom actions are trusted code and sit outside
+this policy. This keeps the blast radius small for the default registry while
+still demonstrating autonomous investigation and policy enforcement.
 
 ### 17.5 Single agent, not a swarm
 
 A single stateful graph is easier to audit, reason about, and persist than a
-multi-agent system. Tool calls are explicit and every state transition is
-recorded.
+multi-agent system. Tool calls are explicit and node progress is captured in
+the persisted `steps_completed` list.
 
 ### 17.6 Chroma vs pgvector
 
@@ -1661,6 +2004,23 @@ Investigation status is polled every 3 s while running. This is simpler and
 works through proxies/CDNs; the cost is modest extra requests. A WebSocket/SSE
 upgrade is a possible future improvement.
 
+### 17.9 Durable remote jobs, not inbound SSH
+
+The remote path uses outbound polling and PostgreSQL-backed jobs instead of
+inbound SSH or a long-running worker per incident. This avoids opening inbound
+management ports, keeps every step restartable, and makes the UI's pending
+remote action the database source of truth. The cost is polling latency
+(configurable, default 5 s), at-least-once delivery, and the need for an agent
+on each target. The agent is a constrained action runner, not a general shell.
+
+### 17.10 Remote remediation is separate from severity automation
+
+The existing `AutomationEngine` is severity/rule-driven and runs inside the
+AIRS worker. Remote remediation cannot reuse it safely because it must target a
+specific host, use a different action catalog, and bind approval to one exact
+job. Keeping the layers separate avoids giving the LLM a path to arbitrary
+automation rules and makes the remote approval record auditable on its own.
+
 ---
 
 ## 18. Performance characteristics
@@ -1680,7 +2040,9 @@ Measured on the local development stack (PostgreSQL + Redis + Chroma + Celery):
 Concurrency and limits:
 
 - Celery worker concurrency defaults to the host CPU count; pass
-  `--concurrency=N` (or add it to the Compose worker command) to cap it.
+  `--concurrency=N` (or add it to the Compose worker command) to cap it. The
+  Compose worker has a 1-CPU limit but does not pin Celery concurrency, so set
+  `--concurrency=1` or `2` explicitly for predictable resource use.
 - `worker_prefetch_multiplier=1` prevents one worker from hoarding tasks.
 - Task hard limit 300 s / soft limit 270 s.
 - Chroma embedding model loads once per process; first request after a cold
@@ -1694,7 +2056,7 @@ Cost controls:
 - `k=3` retrieval by default.
 - Deterministic fallback avoids repeated paid retries when the provider is
   down.
-- Analysis and automation are skipped for already-completed incidents.
+- Analysis and automation already marked terminal are skipped on redelivery.
 
 ---
 
@@ -1718,19 +2080,32 @@ Cost controls:
 | Prometheus/Grafana | Metrics endpoint and stack exist; agent tools do not query Prometheus | Partial |
 | LLM provider | Gemini/OpenAI-compatible adapters; heuristic fallback; tests use mocks | Real adapters, mock-tested |
 | Investigation execution | Read-only tools; `log` safe, `webhook` approval-gated, `script`/`slack` blocked | Shadow mode |
+| Remote agent | Outbound poll/ack/result, local allowlist, idempotent execution store | Real |
+| Remote diagnostics | Memory, CPU, disk, process, systemd status/journal | Real on a Linux host |
+| Remote remediation | `restart_service`, `terminate_process`, approval-gated, local opt-in | Real, v1 catalog only |
+| Remote agent Compose profile | Diagnostics-only container; no systemd inside | Optional demo |
 
 ### Reliability and consistency
 
 - Delivery is **at-least-once**, not exactly-once. The outbox and Celery can
   redeliver after a broker/worker failure. Duplicate work is absorbed by the
   PostgreSQL advisory lock, persisted status checks, and `processing_plan()`.
+- Remote job delivery is also at-least-once. Diagnostic work may be retried; a
+  destructive job that was acknowledged and then lost becomes `UNKNOWN` and is
+  never replayed automatically. The agent-authored result is unique per job,
+  so duplicate posts return the stored outcome.
+- The remote agent is not a sandbox. It is a constrained action runner with a
+  small allowlist, but it must still run with enough privilege to inspect
+  `/proc` and, when enabled, restart allowlisted systemd services.
 - PostgreSQL advisory locks are exercised in production PostgreSQL. The
   SQLite test suite emulates the lock as a no-op so task logic can be tested
-  without a database server.
+  without a database server. Remote restart/approval/result paths also use a
+  PostgreSQL row-lock order (latest workflow state row, then job row); SQLite
+  tests exercise the state machine but not true concurrent lock contention.
 - A definitive `automation_status=FAILED` is terminal on redelivery. Re-sending
   external side effects requires explicit operator action.
-- A generic analysis failure now requests a bounded Celery retry; after the
-  retry budget is exhausted the incident remains `FAILED` for inspection.
+- A generic analysis failure requests a bounded Celery retry; after the retry
+  budget is exhausted the analysis remains `FAILED` for inspection.
 - Concurrent duplicate delivery relies on the PostgreSQL advisory lock. The
   focused tests cover sequential duplicate delivery, retry recovery, broker
   outage recovery, and completed-work skip.
@@ -1745,6 +2120,12 @@ Cost controls:
 - The audit-log API is superadmin-only; tenant admins cannot inspect their own
   audit trail yet. Append-only is enforced by application code, not a database
   trigger.
+- The investigation agent's allowlist/blocklist covers built-in action names.
+  Custom actions registered in `app/automation/registry.py` are trusted code
+  and are not filtered by the agent policy.
+- Several `/metrics` series (resolution time, LLM tokens/latency, RAG
+  retrieval, and queue wait) are exposed as reserved gauges but are not yet
+  incremented by application code; they remain zero until instrumented.
 - Investigation status uses polling, not WebSockets/SSE.
 - The default Gemini free tier can exhaust its daily quota; the fallback keeps
   the pipeline green but produces heuristic analysis.
@@ -1752,8 +2133,14 @@ Cost controls:
   via the superadmin API.
 - Webhook adapters currently cover Grafana and a generic custom schema; GitHub
   and Prometheus sources are modeled but not adapter-complete.
-- Lower-severity investigations are plan-only. Destructive actions remain
-  shadow-mode/approval-gated.
+- Lower-severity investigations are plan-only. Built-in destructive actions
+  remain shadow-mode/approval-gated.
+- Remote v1 remediation is intentionally limited to `restart_service` and
+  `terminate_process`. There is no arbitrary shell, package manager, file
+  editing, or multi-host fan-out.
+- Remote agents need outbound network access to the AIRS API. TLS termination
+  and certificate rotation are the deployment's responsibility; the agent can
+  verify a custom CA bundle.
 - Grafana dashboards and alert rules are not provisioned as code.
 - The demo defaults to optional auth (`AUTH_REQUIRED=false`); production
   deployments must enable auth, disable public registration, and use per-tenant
@@ -1776,11 +2163,7 @@ Roadmap:
 
 ---
 
-## 20. License and author
-
-MIT License.
-
-Built as a portfolio and learning project demonstrating the integration of AI,
+Built as a learning and portfolio project demonstrating the integration of AI,
 Retrieval-Augmented Generation, policy-controlled automation, agentic
 investigation, multi-tenancy, and production-grade observability in a modern
 incident-response platform.

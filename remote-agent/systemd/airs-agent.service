@@ -1,0 +1,33 @@
+[Unit]
+Description=AIRS remote operations agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/airs-agent
+EnvironmentFile=/etc/airs-agent/agent.env
+ExecStart=/opt/airs-agent/.venv/bin/python -m app.main
+Restart=always
+RestartSec=5
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+# The agent needs read access to /proc, /sys, journald, and the system bus.
+ReadWritePaths=/var/lib/airs-agent
+# Output is intentionally journald-visible; never put the token in ExecStart.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

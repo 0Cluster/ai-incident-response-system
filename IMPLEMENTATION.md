@@ -77,7 +77,7 @@ How this repo was built up from the initial FastAPI + Celery + RAG baseline, and
 
 - AI: `BaseAnalyzer` interface (`app/ai/base.py`); `IncidentAnalyzer` (Gemini, lazy client so import never crashes without a key) + `MockAnalyzer` heuristic (`app/ai/mock.py`) + `OpenAICompatibleAnalyzer` (`app/ai/openai_provider.py` — works with OpenAI, Ollama, vLLM, LM Studio via `OPENAI_BASE_URL/MODEL/KEY`); `AI_PROVIDER=gemini|openai|ollama|vllm|lmstudio|mock`, missing key auto-falls back to mock; `AI_MODEL` selectable; `confidence` + `model` on `IncidentAnalysis`.
 - Engine critical fix: actions now constructed as `action_class(action_name=..., **config)` — previously `action_name` was never passed so every rule raised `TypeError` and automation always failed.
-- Engine: per-rule `continue_on_failure`, invalid config skipped with warning instead of aborting whole run.
+- Engine: per-rule `continue_on_failure`; constructor `TypeError`s from unexpected config keys are skipped with a warning. Other constructor errors surface at runtime and are prevented by rule-creation validation where possible.
 - Actions: configurable `timeout` (script 1-600s default 60, webhook 1-120s default 10); rule creation validates `url`/`script_path` → 400.
 
 ## 12. Hardening batch (stats, serialization, auth, limits)
@@ -85,7 +85,7 @@ How this repo was built up from the initial FastAPI + Celery + RAG baseline, and
 - Stats via SQL `GROUP BY` (`stats_filtered`) — no 1000-row Python scan; `list_filtered` query escaping fixed.
 - Webhooks return `response_model=list[IncidentResponse]` (was raw ORM).
 - `automation_runs.executed_at` → `timestamptz server_default=now()` + migration `9e4b6c1d2a7f`.
-- `CORS_ORIGINS` list + `API_KEY` (optional `X-API-Key` on writes, open when empty) + Redis sliding-window `RATE_LIMIT_PER_MIN` on POST writes (fail-open if Redis down).
+- `CORS_ORIGINS` list + `API_KEY` (optional `X-API-Key` on writes, open when empty) + Redis fixed-window `RATE_LIMIT_PER_MIN` on POST writes (fail-open if Redis down).
 - `POST /webhooks/test` proxy for UI drills (no secret in bundle); frontend tester uses it, `VITE_WEBHOOK_SECRET` replaced by optional `VITE_API_KEY`.
 - Deleted broken `scripts/test_*.py`; `reset_all` uses `scan_iter`; webhook metric families documented.
 
@@ -465,8 +465,9 @@ startup/smoke verification remains intentionally deferred. The required named
 volumes (`pgdata`, `chroma_data`, and `hf_cache`) were not created there, and
 the host currently lacked enough free disk space for a clean image build.
 `docker compose config -q` validates the updated service definitions, and the
-API image now installs the CPU-only PyTorch wheel to avoid pulling the default
-PyPI torch wheel with CUDA/NVIDIA dependencies.
+API image now replaces the locked CUDA PyTorch packages with the CPU-only
+wheel in the same layer; the build still downloads the CUDA dependency set
+transiently and needs several GB of free Docker disk space.
 
 The API image already copies `migrations/` and `scripts/`, so the documented
 `docker compose run --rm api uv run alembic upgrade head` path still applies.
@@ -582,8 +583,11 @@ Goal: measurable, production-quality retrieval with evaluation metrics.
 - `IncidentAnalysis` schema gained `abstained: bool = False` field (`app/ai/schemas.py`).
 - `IncidentAnalyzer.analyze` skips the LLM call when no runbook chunks pass
   the relevance threshold, returning an abstained analysis with
-  `severity=UNKNOWN`, `confidence=1.0`, and a clear recommendation
+  `severity=UNKNOWN`, `confidence=0.0`, and a clear recommendation
   (`app/ai/analyzer.py`).
+- `_run_analysis` only replaces the incident severity when the analysis returns
+  a known severity, so an abstained analysis cannot erase an alert-supplied
+  severity (`app/tasks/incident.py`).
 
 ### Evaluation dataset + metrics
 
@@ -725,14 +729,12 @@ Goal: safe human-in-the-loop remediation execution through allow-listed actions.
 
 ### Controlled action execution
 
-- `app/agent/workflow.py` — `execute_approved_action` node runs the
-  `AutomationEngine` against the incident, but only allow-listed actions may
-  execute:
+- `app/agent/workflow.py` — `execute_approved_action` runs the
+  `AutomationEngine` after checking for blocked built-in actions:
   - `log` (safe), `webhook` (destructive — requires approval)
-  - `script` and `slack` are in `BLOCKED_ACTIONS` and never execute from the agent
-- Blocked actions return an error instead of executing.
-- Automation rules for the incident's severity are checked against the allowlist
-  before execution.
+  - `script` and `slack` are in `BLOCKED_ACTIONS`; if any are configured, the
+    node returns an error and executes nothing from the agent
+- Custom actions are trusted code and are not filtered by the agent policy.
 
 ### Human approval API
 
@@ -856,8 +858,10 @@ Added to `app/monitoring/metrics.py` and exposed via `GET /metrics`:
 - `retrieval_started/completed/failed(backend)`
 - `queue_wait_seconds(queue, seconds)`
 
-`app/monitoring/prometheus.py` syncs all new Redis keys to Prometheus Gauges
-on each scrape, including dynamic discovery of models and queues.
+Resolution-time, LLM, retrieval, and queue-wait methods do not currently have
+application call sites; their Prometheus gauges remain zero until wired.
+`app/monitoring/prometheus.py` still syncs their Redis keys to Prometheus
+Gauges on each scrape, including dynamic discovery of models and queues.
 
 ### Verification evidence
 
@@ -1053,7 +1057,8 @@ or the reliability of the approval flow.
   secrets.
 - **API image size:** after syncing the locked environment, install the CPU-only
   PyTorch wheel (`https://download.pytorch.org/whl/cpu`) and remove the default
-  PyPI torch/CUDA dependency set, reducing the final image size.
+  PyPI torch/CUDA dependency set. The final image is smaller, but a clean build
+  still downloads the CUDA packages transiently.
 - **Runbook tenant isolation:** `search_runbooks` no longer accepts a
   caller-supplied `tenant_id`; it always uses `principal.tenant_id`, audits the
   search, and uses the cached `get_retriever()` plus `RAG_THRESHOLD`.
@@ -1193,3 +1198,148 @@ $ uv run ruff check .
 All checks passed!
 ```
 
+
+## 35. Phase 9 — remote agents and remediation (2026-11-08)
+
+Goal: extend the investigation workflow from read-only evidence to approved
+remote execution without inbound SSH, while keeping at-least-once delivery and
+an honest safety boundary.
+
+### Durable job layer
+
+- New tables: `remote_agents`, `remote_agent_credentials`,
+  `remote_agent_events`, `remote_jobs`, `remote_job_results`,
+  `remote_job_approvals`, and `remote_job_events`. Migration
+  `8d1c0a7b2f34` also adds `incidents.target_agent_id` and
+  `runbooks.metadata`.
+- `RemoteJobService` owns creation, idempotency-key reuse, atomic leasing,
+  acknowledgement, result storage, duplicate-result return, lease recovery,
+  and expiry.
+- PostgreSQL is the source of truth. Celery only wakes result processing; a
+  broker outage cannot lose a pending job.
+- Delivery remains at-least-once. The unique result row and the agent's local
+  SQLite execution store absorb duplicate attempts. The agent never replays a
+  destructive action after a crash; it reports `UNKNOWN` for human
+  reconciliation.
+- Diagnostic leases retry after expiry; destructive leases become `UNKNOWN`.
+- `recover_remote_jobs` is the periodic recovery task. It recovers expired
+  leases, expires unleased jobs, and resumes any terminal job whose result was
+  never applied (lost wake-up, expired approval, crash-lost lease). A terminal
+  job without a result advances the investigation to a clear failed/`UNKNOWN`
+  state instead of leaving it `waiting_for_agent` forever.
+
+### Remote investigation flow
+
+- An incident with `target_agent_id` dispatches `run_remote_investigation`
+  instead of the LangGraph task. Incidents without a target keep the existing
+  local path.
+- The planner receives only catalog action IDs, the runbook context, prior
+  evidence, and the agent's capabilities. A deterministic fallback keeps
+  `AI_PROVIDER=mock` and tests stable. The LLM cannot submit shell text.
+- Diagnostics produce structured evidence. When enough evidence exists, the
+  service proposes one remediation job and pauses in `waiting_for_approval`.
+- Approvals are per job: `POST /remote-jobs/{id}/approve|reject`. The stored
+  approval hash binds tenant, incident, agent, action, normalized parameters,
+  and risk. The endpoint also verifies expiry, current job state, and the
+  investigation `run_id`, and requires `RESPONDER+`.
+- The old incident-level approval endpoint rejects remote investigations.
+- Starting a new run cancels not-yet-leased jobs and refuses while a
+  destructive job is approved or in flight, so a stale approval cannot leak
+  into a new run.
+- After remediation, verification jobs reuse diagnostic probes under a
+  distinct `VERIFICATION` execution type. The memory baseline is only captured
+  from diagnostic evidence, so verification cannot overwrite the baseline and
+  falsely pass itself.
+
+### Action catalog and agent safety
+
+- `app/remote/actions.py` is the authoritative catalog:
+  - diagnostics: memory, CPU, disk, process lists/details, service status,
+    bounded journal logs;
+  - remediation: `restart_service`, `terminate_process`, both approval-gated.
+- Parameters are normalized with Pydantic models. Unknown actions and invalid
+  parameters are rejected server-side.
+- `remote-agent/` is a standalone `httpx` daemon:
+  - heartbeat, poll, acknowledge, execute, store, post with retry;
+  - fixed argv commands and no shell;
+  - service and disk allowlists;
+  - remediation requires `AIRS_ENABLE_REMEDIATION=true`;
+  - `terminate_process` revalidates PID start time, owner, command, protects
+    PID 1/self/parent, refuses root-owned and critical processes;
+  - local redaction and byte caps, followed by server-side redaction of stdout,
+    stderr, error text, and nested structured output.
+- Agent credentials are high-entropy, hashed, expiring, revocable, and scoped
+  to one tenant/agent. User bearer tokens are not accepted on agent endpoints.
+
+### Alert routing and UI
+
+- Grafana accepts `labels.agent_id`/`labels.agent`, falls back to
+  `labels.instance`, strips a port, and resolves only `ACTIVE` agents in the
+  tenant. Generic webhooks use `target_agent_ref`.
+- New **Agents** page: register, token-shown-once display, online/offline,
+  rotate, disable, revoke.
+- Investigation page: remote job timeline, job output, waiting-for-agent state,
+  exact pending action/parameters/hash, and approve/reject with a reason.
+- Approvals page: separate pending-remote-actions queue plus links to review
+  remote investigations; local approvals are unchanged.
+- Agents in the UI can now be re-enabled after `disable`; `revoke` remains
+  permanent. The remote approval card also shows the approval's expiry.
+
+### Concurrency and information-exposure hardening
+
+- Start/approval/result processing use a consistent lock order
+  (latest `workflow_states` row first, then the job row on PostgreSQL), so a
+  restart cannot interleave a new run with approval/result processing for the
+  old run.
+- Starting a run now cancels not-yet-leased jobs in the same transaction as
+  the new state row; the job query skips rows locked by leasing/approval.
+  The restart-active check also locks active destructive job rows on
+  PostgreSQL so leasing cannot race behind the restart check.
+- Agent acknowledgement and result posting lock the job row so duplicate
+  deliveries and lease recovery cannot create a second transition.
+- The agent-facing job response is a minimal contract (`AgentJobResponse`);
+  it does not disclose tenant ID, idempotency key, operator identity, or
+  approval records.
+- Server-side structured-output sanitization also applies a total transport
+  cap after redaction so a malicious agent cannot expand arbitrary JSON.
+
+### Deliberate limits
+
+- No Kubernetes, broker, vector DB, or local LLM was added.
+- No inbound SSH or unrestricted shell execution.
+- V1 remediation is limited to `restart_service` and `terminate_process`.
+- The remote agent is a constrained runner, not a sandbox.
+- The optional Compose `remote-demo` profile is diagnostics-only because the
+  container has no systemd.
+
+### Verification evidence
+
+```text
+$ uv run pytest -q --disable-warnings --maxfail=1
+122 passed, 2 warnings
+
+$ uv run ruff check app tests migrations scripts
+All checks passed!
+
+$ uv run ruff check remote-agent/app remote-agent/tests
+All checks passed!
+
+$ cd frontend && npm run build
+✓ built in 447ms
+
+$ cd frontend && npm run lint
+oxlint: clean
+
+$ cd remote-agent && uv run --no-project --with pytest --with httpx python -m pytest -q
+10 passed
+
+$ uv run alembic heads
+8d1c0a7b2f34 (head)
+
+$ uv run python -c "import app.main"
+imports ok
+```
+
+Docker Compose was intentionally **not** started or rebuilt; image build,
+migration-on-PostgreSQL, agent container startup, and a live two-host smoke test
+remain pending explicit approval.

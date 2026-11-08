@@ -18,6 +18,7 @@ class CustomWebhookRequest(BaseModel):
     severity: Severity = Severity.UNKNOWN
 
     fingerprint: str | None = Field(default=None, max_length=255)
+    target_agent_ref: str | None = Field(default=None, max_length=255)
 
 
 class GrafanaAnnotations(BaseModel):
@@ -33,6 +34,10 @@ class GrafanaLabels(BaseModel):
     alertname: str = "grafana-alert"
     instance: str | None = None
     severity: str | None = None
+    # Explicit target agent. Falls back to ``instance`` so a hostname-based
+    # registration works with existing Grafana dashboards.
+    agent_id: str | None = None
+    agent: str | None = None
 
 
 class GrafanaAlert(BaseModel):

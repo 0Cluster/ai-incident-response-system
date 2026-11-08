@@ -69,9 +69,14 @@ def _seed_incident(
 
 
 class FakeAnalyzer:
-    def __init__(self, fail_first: bool = False) -> None:
+    def __init__(
+        self,
+        fail_first: bool = False,
+        severity: Severity = Severity.HIGH,
+    ) -> None:
         self.calls = 0
         self.fail_first = fail_first
+        self.severity = severity
 
     def analyze(self, message: str, *, tenant_id: int | None = None):
         _ = (message, tenant_id)
@@ -80,7 +85,7 @@ class FakeAnalyzer:
             raise RuntimeError("transient analyzer failure")
         return IncidentAnalysis(
             summary="Database is down",
-            severity=Severity.HIGH,
+            severity=self.severity,
             recommendation="Restart the primary database",
             sources=[],
             confidence=0.8,
@@ -174,6 +179,31 @@ def test_duplicate_task_delivery_does_not_repeat_analysis_or_automation():
         incident = db.get(Incident, incident_id)
         assert incident.analysis_status == AnalysisStatus.COMPLETED
         assert incident.automation_status == AutomationStatus.SUCCESS
+    finally:
+        db.close()
+
+
+def test_abstained_analysis_preserves_existing_severity():
+    SessionLocal = _session_factory()
+    incident_id = _seed_incident(SessionLocal)  # seeded as HIGH
+    analyzer = FakeAnalyzer(severity=Severity.UNKNOWN)
+    RecordingAutomationEngine.calls = []
+
+    with (
+        patch("app.tasks.incident.SessionLocal", SessionLocal),
+        patch("app.tasks.incident.get_incident_analyzer", return_value=analyzer),
+        patch(
+            "app.tasks.incident.AutomationEngine",
+            RecordingAutomationEngine,
+        ),
+    ):
+        analyze_incident.run(incident_id)
+
+    db: Session = SessionLocal()
+    try:
+        incident = db.get(Incident, incident_id)
+        assert incident.analysis_status == AnalysisStatus.COMPLETED
+        assert incident.severity == Severity.HIGH
     finally:
         db.close()
 

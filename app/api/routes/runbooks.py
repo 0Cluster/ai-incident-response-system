@@ -43,6 +43,7 @@ def list_runbooks(
             "name": runbook.name,
             "chars": len(runbook.content),
             "chunks": len(chunk_markdown(runbook.name, runbook.content)),
+            "metadata": runbook.metadata_json,
         }
         for runbook in service.list(principal.tenant_id)
     ]
@@ -63,6 +64,7 @@ def get_runbook(
         "name": name,
         "content": runbook.content,
         "chunks": len(chunk_markdown(name, runbook.content)),
+        "metadata": runbook.metadata_json,
     }
 
 
@@ -79,8 +81,20 @@ def save_runbook(
         raise HTTPException(status_code=400, detail="content must be non-empty markdown")
     if len(content) > 100_000:
         raise HTTPException(status_code=400, detail="content too large (max 100k chars)")
-    service.upsert(name, content, tenant_id=principal.tenant_id)
-    return {"name": name, "chunks": len(chunk_markdown(name, content))}
+    metadata = body.get("metadata")
+    if metadata is not None and not isinstance(metadata, dict):
+        raise HTTPException(status_code=400, detail="metadata must be a JSON object")
+    result = service.upsert(
+        name,
+        content,
+        tenant_id=principal.tenant_id,
+        metadata=metadata,
+    )
+    return {
+        "name": name,
+        "chunks": len(chunk_markdown(name, content)),
+        "metadata": result.metadata_json,
+    }
 
 
 @router.delete("/{name}", status_code=204)

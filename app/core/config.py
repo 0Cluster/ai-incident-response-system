@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     RAG_BACKEND: str = "chroma"
     CHUNK_OVERLAP_CHARS: int = 200
 
+    # ------------------------------------------------------------------
+    # Remote operations agent
+    # ------------------------------------------------------------------
+    REMOTE_AGENT_TOKEN_TTL_DAYS: int = 90
+    REMOTE_JOB_DEFAULT_TTL_SECONDS: int = 900
+    REMOTE_MAX_INVESTIGATION_ROUNDS: int = 3
+    REMOTE_MAX_ACTIONS_PER_ROUND: int = 3
+    REMOTE_MAX_TOTAL_ACTIONS: int = 10
+    REMOTE_VERIFICATION_MEMORY_PERCENT: float = 80.0
+    REMOTE_VERIFICATION_MEMORY_DROP: float = 10.0
+
     FRONTEND_URL: str = "http://localhost:5173"
     CORS_ORIGINS: str = ""
     LOG_JSON: bool = False

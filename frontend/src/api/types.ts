@@ -21,6 +21,7 @@ export interface Incident {
   recommendation: string | null;
   source: IncidentSource;
   fingerprint: string | null;
+  target_agent_id: number | null;
   rag_sources: string[] | null;
 }
 

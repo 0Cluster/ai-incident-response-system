@@ -23,6 +23,7 @@ class CustomWebhookAdapter(WebhookAdapter[CustomWebhookRequest]):
                     severity=request.severity,
                     source=IncidentSource.CUSTOM,
                     fingerprint=request.fingerprint,
+                    target_agent_ref=request.target_agent_ref,
                 ),
                 resolved=False,
             )

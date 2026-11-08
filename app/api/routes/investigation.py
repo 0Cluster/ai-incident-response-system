@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -23,10 +23,13 @@ from app.agent.state import InvestigationState
 from app.core.auth import Principal, get_current_principal, require_role
 from app.core.dependencies import get_db
 from app.core.security import rate_limit
-from app.models.enums import UserRole
+from app.models.enums import RemoteAgentStatus, UserRole
 from app.models.workflow_state import WorkflowState
 from app.repositories.incident import IncidentRepository
+from app.services.remote_agent import RemoteAgentService
+from app.services.remote_job import RemoteJobService
 from app.tasks.investigation import run_investigation
+from app.tasks.remote import run_remote_investigation
 
 router = APIRouter(prefix="/investigations", tags=["Investigation"])
 
@@ -59,6 +62,14 @@ class InvestigationStatusResponse(BaseModel):
     service_healthy: bool
     error: str | None
     steps_completed: list[str]
+    mode: str = "local"
+    target_agent_id: int | None = None
+    investigation_round: int = 0
+    pending_job_ids: list[int] = Field(default_factory=list)
+    evidence: list[dict] = Field(default_factory=list)
+    planner_reasoning: str = ""
+    remote_action: dict | None = None
+    remote_action_hash: str | None = None
 
 
 class InvestigationApproveRequest(BaseModel):
@@ -92,6 +103,14 @@ def _state_to_response(state: InvestigationState) -> InvestigationStatusResponse
         service_healthy=state.service_healthy,
         error=state.error,
         steps_completed=state.steps_completed,
+        mode=state.mode,
+        target_agent_id=state.target_agent_id,
+        investigation_round=state.investigation_round,
+        pending_job_ids=state.pending_job_ids,
+        evidence=state.evidence,
+        planner_reasoning=state.planner_reasoning,
+        remote_action=state.remote_action,
+        remote_action_hash=state.remote_action_hash,
     )
 
 
@@ -130,6 +149,7 @@ def _load_latest_state_row(
     )
     if for_update:
         query = query.with_for_update()
+        query = query.execution_options(populate_existing=True)
     return query.first()
 
 
@@ -171,15 +191,17 @@ def start_investigation(
     repo: IncidentRepository = Depends(get_incident_repository),
     db: Session = Depends(get_db),
 ):
-    """Start a LangGraph investigation workflow for an incident.
+    """Start an investigation workflow for an incident.
 
-    Shadow mode: no destructive actions are executed. The workflow produces
-    a remediation plan and risk assessment. State is persisted to the DB and
-    the graph runs asynchronously via Celery.
+    Local incidents use the LangGraph shadow-mode workflow. Incidents with an
+    active target agent use durable remote jobs instead. Neither executes
+    destructive actions without approval. State is persisted to the DB and the
+    work runs asynchronously via Celery.
 
-    A second start is rejected while a non-stale run is in progress. Without
-    that guard, the new Celery delivery would skip on the advisory lock (the
-    old worker owns it) and the restart would silently do nothing.
+    A second start is rejected while a non-stale run is in progress, and while
+    an approved or in-flight remote remediation may still be running. Without
+    those guards, a new Celery delivery could be skipped by the advisory lock
+    or a stale approval could leak into the new run.
     """
     rate_limit(request)
 
@@ -189,6 +211,17 @@ def start_investigation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Incident not found",
         )
+
+    if incident.target_agent_id is not None:
+        agent = RemoteAgentService(db).get(
+            incident.target_agent_id,
+            principal.tenant_id,
+        )
+        if agent is None or agent.status != RemoteAgentStatus.ACTIVE:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The incident target agent is not active",
+            )
 
     latest = _load_latest_state_row(
         db,
@@ -206,6 +239,27 @@ def start_investigation(
             detail=(
                 "An investigation is already running for this incident. "
                 "Wait for it to finish before starting another."
+            ),
+        )
+
+    job_service = RemoteJobService(db)
+    previous_mode = (
+        str((latest.state_json or {}).get("mode") or "local")
+        if latest is not None
+        else "local"
+    )
+    if (
+        incident.target_agent_id is not None or previous_mode == "remote"
+    ) and job_service.has_active_remediation(
+        principal.tenant_id,
+        incident_id,
+        for_update=True,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A remote remediation may still be running for this incident. "
+                "Wait for its result before starting another investigation."
             ),
         )
 
@@ -228,6 +282,8 @@ def start_investigation(
     state.workflow_status = "in_progress"
     state.current_step = "load_incident"
     state.error = None
+    state.mode = "remote" if incident.target_agent_id is not None else "local"
+    state.target_agent_id = incident.target_agent_id
 
     # Clear every derived field from the previous run. Keeping stale evidence
     # or a stale plan would make a restarted investigation misleading and
@@ -240,6 +296,17 @@ def start_investigation(
     state.metrics_checked = False
     state.logs_checked = False
     state.deployment_history_checked = False
+    state.investigation_round = 0
+    state.actions_executed = 0
+    state.pending_job_ids = []
+    state.evidence = []
+    state.planner_reasoning = ""
+    state.baseline_metrics = {}
+    state.target_service = None
+    state.runbook_name = None
+    state.remote_action = None
+    state.remote_action_hash = None
+    state.approval_id = None
     state.remediation_plan = ""
     state.risk_level = "unknown"
     state.requires_approval = False
@@ -258,17 +325,36 @@ def start_investigation(
     state.service_healthy = False
     state.steps_completed = []
     state.updated_at = datetime.now(timezone.utc).isoformat()
+
+    # A new run must not leave an old approval actionable. Cancel only jobs
+    # that have not been leased; in-flight work was rejected above. Local-only
+    # incidents never touch the remote-job tables.
+    if state.mode == "remote" or previous_mode == "remote":
+        job_service.cancel_pending_for_incident(
+            principal.tenant_id,
+            incident_id,
+            reason="superseded by a new investigation run",
+            commit=False,
+        )
     _persist_state(db, state)
 
-    # Dispatch the graph execution asynchronously
+    # Dispatch the graph execution or the remote job planner asynchronously.
     try:
-        run_investigation.delay(
-            incident_id=incident_id,
-            actor_user_id=principal.user_id,
-            actor_email=principal.email,
-            run_id=state.run_id,
-            resume=False,
-        )
+        if state.mode == "remote":
+            run_remote_investigation.delay(
+                incident_id=incident_id,
+                actor_user_id=principal.user_id,
+                actor_email=principal.email,
+                run_id=state.run_id,
+            )
+        else:
+            run_investigation.delay(
+                incident_id=incident_id,
+                actor_user_id=principal.user_id,
+                actor_email=principal.email,
+                run_id=state.run_id,
+                resume=False,
+            )
     except Exception:
         # If Celery dispatch fails, mark the state as failed
         state.workflow_status = "failed"
@@ -392,6 +478,15 @@ def approve_investigation(
         )
 
     state = InvestigationState(**row.state_json)
+
+    if state.mode == "remote":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Remote remediation is approved per-job. "
+                "Use POST /api/v1/remote-jobs/{job_id}/approve."
+            ),
+        )
 
     if not state.requires_approval:
         raise HTTPException(

@@ -26,6 +26,10 @@ class InvestigationState(BaseModel):
     # this id still matches the latest state row, so a slow/old task cannot
     # overwrite a newer restart.
     run_id: str = ""
+    # ``local`` uses the original LangGraph workflow; ``remote`` uses durable
+    # remote jobs and is resumed by agent result submission.
+    mode: str = "local"
+    target_agent_id: int | None = None
 
     # --- Loaded incident ---
     incident_title: str = ""
@@ -48,6 +52,21 @@ class InvestigationState(BaseModel):
     metrics_checked: bool = False
     logs_checked: bool = False
     deployment_history_checked: bool = False
+
+    # --- Remote investigation ---
+    investigation_round: int = 0
+    max_rounds: int = 3
+    actions_executed: int = 0
+    max_actions: int = 10
+    pending_job_ids: list[int] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    planner_reasoning: str = ""
+    baseline_metrics: dict[str, Any] = Field(default_factory=dict)
+    target_service: str | None = None
+    runbook_name: str | None = None
+    remote_action: dict[str, Any] | None = None
+    remote_action_hash: str | None = None
+    approval_id: int | None = None
 
     # --- Remediation planning ---
     remediation_plan: str = ""
@@ -73,7 +92,8 @@ class InvestigationState(BaseModel):
     service_healthy: bool = False
 
     # --- Outcome ---
-    workflow_status: str = "pending"  # pending | in_progress | completed | waiting_for_approval | failed
+    # pending | in_progress | waiting_for_agent | waiting_for_approval | completed | failed
+    workflow_status: str = "pending"
     error: str | None = None
 
     # --- Metadata ---

@@ -650,8 +650,10 @@ function TenantsSection() {
               <CopyButton value={created.webhook_secret} />
             </div>
             <p className="mt-1 text-xs text-amber-800">
-              Per-tenant webhook routing is reserved for a future release; the global
-              WEBHOOK_SECRET is still used by the ingest endpoints.
+              Per-tenant webhook routing is enabled: send this secret as{" "}
+              <code>X-Webhook-Secret</code> and{" "}
+              <code>X-Tenant-Slug: {created.slug}</code> to{" "}
+              <code>/webhooks/grafana</code> or <code>/webhooks/custom</code>.
             </p>
           </div>
         )}

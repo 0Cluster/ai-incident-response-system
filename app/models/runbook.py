@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -24,6 +32,14 @@ class Runbook(Base):
         index=True,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Optional structured metadata for agentic investigations:
+    # alert_types, investigation_actions, remediation_actions,
+    # verification_actions, risk_level, service.
+    metadata_json: Mapped[dict | None] = mapped_column(
+        "metadata",
+        JSON,
+        nullable=True,
+    )
     version: Mapped[int] = mapped_column(
         default=1,
         server_default="1",

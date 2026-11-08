@@ -66,6 +66,11 @@ class GrafanaWebhookAdapter(
                         severity=severity,
                         source=IncidentSource.GRAFANA,
                         fingerprint=alert.fingerprint or None,
+                        target_agent_ref=(
+                            alert.labels.agent_id
+                            or alert.labels.agent
+                            or alert.labels.instance
+                        ),
                     ),
                     resolved=(
                         alert.status.lower()

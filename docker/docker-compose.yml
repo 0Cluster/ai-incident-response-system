@@ -196,6 +196,41 @@ services:
           cpus: "0.1"
           memory: 128M
 
+  # Optional diagnostics-only demo target. The agent polls the API and can
+  # inspect its own container (memory/processes/disk). It cannot restart a
+  # systemd service inside this container; use a real Linux host for that.
+  #   docker compose --profile remote-demo up -d agent
+  agent:
+    profiles: ["remote-demo"]
+    build:
+      context: ../remote-agent
+      dockerfile: Dockerfile
+    environment:
+      AIRS_BASE_URL: http://api:8000
+      AIRS_AGENT_TOKEN: ${AIRS_AGENT_TOKEN:-}
+      AIRS_AGENT_HOSTNAME: ${AIRS_AGENT_HOSTNAME:-compose-demo-agent}
+      AIRS_POLL_INTERVAL: ${AIRS_POLL_INTERVAL:-5}
+      AIRS_HEARTBEAT_INTERVAL: ${AIRS_HEARTBEAT_INTERVAL:-30}
+      AIRS_ENABLE_REMEDIATION: "false"
+      AIRS_ALLOWED_SERVICES: ${AIRS_ALLOWED_SERVICES:-}
+      AIRS_STATE_DB: /var/lib/airs-agent/state.db
+      AIRS_LOG_LEVEL: INFO
+    volumes:
+      - agent_state:/var/lib/airs-agent
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          cpus: "0.05"
+          memory: 32M
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.108.0
     command: ["--config", "/etc/otel-collector-config.yaml"]
@@ -245,3 +280,4 @@ volumes:
   pgdata:
   chroma_data:
   hf_cache:
+  agent_state:

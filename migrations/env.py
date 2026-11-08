@@ -11,6 +11,8 @@ from app.models import incident  # noqa: F401
 from app.models import automation_run  # noqa: F401
 from app.models import automation_rule  # noqa: F401
 from app.models import outbox  # noqa: F401
+from app.models import remote_agent  # noqa: F401
+from app.models import remote_job  # noqa: F401
 from app.models import runbook  # noqa: F401
 from app.models import runbook_chunk  # noqa: F401
 from app.models import user  # noqa: F401

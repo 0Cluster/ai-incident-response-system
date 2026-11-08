@@ -27,17 +27,27 @@ class RunbookService:
             )
         )
 
-    def upsert(self, name: str, content: str, *, tenant_id: int) -> Runbook:
+    def upsert(
+        self,
+        name: str,
+        content: str,
+        *,
+        tenant_id: int,
+        metadata: dict | None = None,
+    ) -> Runbook:
         runbook = self.get(name, tenant_id)
         if runbook is None:
             runbook = Runbook(
                 tenant_id=tenant_id,
                 name=name,
                 content=content,
+                metadata_json=metadata,
             )
             self.db.add(runbook)
         else:
             runbook.content = content
+            if metadata is not None:
+                runbook.metadata_json = metadata
             runbook.version = (runbook.version or 1) + 1
         self.db.commit()
         self.db.refresh(runbook)

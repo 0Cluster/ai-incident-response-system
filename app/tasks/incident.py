@@ -76,7 +76,10 @@ def _run_analysis(
         MonitoringService.analysis_completed(duration)
 
         incident.ai_summary = analysis.summary
-        incident.severity = Severity(analysis.severity)
+        # An abstained analysis returns UNKNOWN. Preserve the severity already
+        # supplied by the alert source instead of erasing it.
+        if analysis.severity != Severity.UNKNOWN:
+            incident.severity = Severity(analysis.severity)
         incident.recommendation = analysis.recommendation
         incident.analysis_status = AnalysisStatus.COMPLETED
         incident.rag_sources = analysis.sources

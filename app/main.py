@@ -5,12 +5,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.routes.agents import admin_router as agents_router
+from app.api.routes.agents import agent_router
 from app.api.routes.audit_log import router as audit_log_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.automation import router as automation_router
 from app.api.routes.incident import router as incident_router
 from app.api.routes.investigation import router as investigation_router
 from app.api.routes.outbox import router as outbox_router
+from app.api.routes.remote_jobs import router as remote_jobs_router
 from app.api.routes.runbooks import router as runbooks_router
 from app.api.routes.tenant import router as tenant_router
 from app.core.config import settings
@@ -126,6 +129,21 @@ app.include_router(
 
 app.include_router(
     investigation_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    agents_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    agent_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    remote_jobs_router,
     prefix="/api/v1",
 )
 

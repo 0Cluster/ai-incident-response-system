@@ -1,7 +1,10 @@
 from app.core.providers import get_retriever
 
 
-def test_provider_defaults_to_chroma():
+def test_provider_defaults_to_chroma(monkeypatch):
+    from app.core import providers
+
+    monkeypatch.setattr(providers.settings, "RAG_BACKEND", "chroma")
     r = get_retriever.__wrapped__()
     assert type(r).__name__ == "Retriever"
 

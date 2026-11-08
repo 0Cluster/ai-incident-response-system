@@ -46,6 +46,13 @@ class Incident(Base):
         nullable=False,
         index=True,
     )
+    # Optional target for remote investigations. Existing/local incidents keep
+    # this NULL and continue through the local LangGraph workflow.
+    target_agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("remote_agents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     title: Mapped[str] = mapped_column(
         String(255),

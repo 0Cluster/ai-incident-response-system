@@ -4,9 +4,18 @@ import { api } from "./client";
 export type InvestigationStatus =
   | "pending"
   | "in_progress"
-  | "completed"
+  | "waiting_for_agent"
   | "waiting_for_approval"
+  | "completed"
   | "failed";
+
+export interface RemoteAction {
+  job_id: number;
+  action_id: string;
+  parameters: Record<string, unknown>;
+  description: string;
+  risk_level: string;
+}
 
 export interface InvestigationState {
   investigation_id: number;
@@ -26,6 +35,23 @@ export interface InvestigationState {
   service_healthy: boolean;
   error: string | null;
   steps_completed: string[];
+  mode: "local" | "remote";
+  target_agent_id: number | null;
+  investigation_round: number;
+  pending_job_ids: number[];
+  evidence: Array<{
+    job_id: number;
+    action_id: string;
+    parameters: Record<string, unknown>;
+    execution_type: string;
+    status: string;
+    exit_code: number | null;
+    duration_ms: number | null;
+    output: unknown;
+  }>;
+  planner_reasoning: string;
+  remote_action: RemoteAction | null;
+  remote_action_hash: string | null;
 }
 
 export interface InvestigationStartResponse {
@@ -62,6 +88,7 @@ export function useInvestigation(incidentId: number | null, enabled: boolean) {
       if (
         state &&
         (state.workflow_status === "in_progress" ||
+          state.workflow_status === "waiting_for_agent" ||
           state.workflow_status === "waiting_for_approval")
       ) {
         return 3000; // poll every 3 seconds

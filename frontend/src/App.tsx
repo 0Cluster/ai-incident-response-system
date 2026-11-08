@@ -13,6 +13,7 @@ import Settings from "./pages/Settings";
 import WebhookTester from "./pages/WebhookTester";
 import Investigation from "./pages/Investigation";
 import Approvals from "./pages/Approvals";
+import Agents from "./pages/Agents";
 import { useHealth } from "./api/runbooks";
 import { clearToken, errorStatus, getToken } from "./api/client";
 import { useMe } from "./api/auth";
@@ -71,6 +72,7 @@ export default function App() {
             <NavLink to="/incidents" className={linkCls}>Incidents</NavLink>
             <NavLink to="/rules" className={linkCls}>Automation</NavLink>
             <NavLink to="/runbooks" className={linkCls}>Runbooks</NavLink>
+            <NavLink to="/agents" className={linkCls}>Agents</NavLink>
             <NavLink to="/webhooks" className={linkCls}>Webhooks</NavLink>
             {me?.auth_type === "bearer" && me?.user_id !== null && (
               <>
@@ -116,6 +118,7 @@ export default function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/rules" element={<Rules />} />
           <Route path="/runbooks" element={<Runbooks />} />
+          <Route path="/agents" element={<Agents />} />
           <Route path="/webhooks" element={<WebhookTester />} />
           <Route path="/incidents/:id/investigation" element={<Investigation />} />
           <Route path="/approvals" element={<Approvals />} />
